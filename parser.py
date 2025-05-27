@@ -80,6 +80,12 @@ class TaskTrackerParser:
                             help='Path to configuration file',
                             metavar='FILE')
 
+        # Add debug mode flag
+        parser.add_argument('--debug',
+                            action='store_true',
+                            help='Enable debug mode for troubleshooting',
+                            default=False)
+
         # Create subparsers with improved help formatting
         subparsers = parser.add_subparsers(
             dest='command',

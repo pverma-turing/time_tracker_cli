@@ -72,6 +72,11 @@ def main():
         # Parse arguments
         args = parser.parse_args()
 
+        # Check if debug mode is enabled
+        if args.debug:
+            print("Running in debug mode")
+            print("Parsed arguments:", vars(args))
+
         # Check for config file and print message if provided
         if args.config:
             print(f"Using config file: {args.config}")
