@@ -9,12 +9,13 @@ This module serves as the main entry point for the TTT application. It handles:
 - User feedback
 
 The module follows a command-pattern approach, where different commands
-(log, view, summary) are dispatched based on user input.
+are dispatched based on user input.
 """
 
 import sys
 from typing import List, Optional
 
+from config import AVAILABLE_COMMANDS
 from parser import TaskTrackerParser
 
 
@@ -63,6 +64,8 @@ def main():
     # Create the parser
     parser_manager = TaskTrackerParser()
     parser = parser_manager.create_parser()
+
+    # Get the list of available commands from the parser (which gets them from config)
     available_commands = list(parser_manager.commands.keys())
 
     try:
