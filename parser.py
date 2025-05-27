@@ -15,6 +15,7 @@ from typing import Dict, Optional
 
 from config import AVAILABLE_COMMANDS
 from commands import Command
+from version import __version__
 
 
 class TaskTrackerParser:
@@ -54,8 +55,9 @@ class TaskTrackerParser:
 
         This method:
         1. Creates the main parser with program name, description, and epilog
-        2. Sets up subparsers for each command
-        3. Configures each command's specific arguments
+        2. Adds global options like --version flag
+        3. Sets up subparsers for each command
+        4. Configures each command's specific arguments
 
         Returns:
             argparse.ArgumentParser: A fully configured argument parser ready for processing
@@ -68,6 +70,10 @@ class TaskTrackerParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="Use 'ttt <command> --help' to view options for a specific command."
         )
+
+        # Add version argument that will automatically print version and exit when used
+        parser.add_argument('--version', action='version',
+                           version=f'%(prog)s {__version__}')
 
         # Create subparsers with improved help formatting
         subparsers = parser.add_subparsers(
