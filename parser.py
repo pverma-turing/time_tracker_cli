@@ -10,9 +10,11 @@ implementation, which makes the codebase more maintainable and extensible.
 """
 
 import argparse
+import importlib
 from typing import Dict, Optional
 
-from commands import Command, LogCommand, ViewCommand, SummaryCommand
+from config import AVAILABLE_COMMANDS
+from commands import Command
 
 
 class TaskTrackerParser:
@@ -25,7 +27,7 @@ class TaskTrackerParser:
     - Providing access to command instances for execution
 
     The design allows for easily adding new commands to the application by
-    simply updating the commands dictionary in the constructor.
+    simply updating the AVAILABLE_COMMANDS constant in the config module.
     """
 
     def __init__(self):
@@ -33,14 +35,18 @@ class TaskTrackerParser:
         Initialize the parser with all available commands.
 
         Creates a dictionary mapping command names to their respective Command instances.
-        This centralized collection of commands makes it easy to add, remove, or modify
-        available commands.
+        The commands are dynamically loaded based on the AVAILABLE_COMMANDS constant
+        from the config module.
         """
-        self.commands: Dict[str, Command] = {
-            'log': LogCommand(),
-            'view': ViewCommand(),
-            'summary': SummaryCommand()
-        }
+        self.commands: Dict[str, Command] = {}
+
+        # Import command classes dynamically from the commands module
+        commands_module = importlib.import_module('commands')
+
+        # Create command instances based on the configuration
+        for cmd_name, cmd_class_name in AVAILABLE_COMMANDS.items():
+            cmd_class = getattr(commands_module, cmd_class_name)
+            self.commands[cmd_name] = cmd_class()
 
     def create_parser(self) -> argparse.ArgumentParser:
         """
