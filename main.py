@@ -72,6 +72,10 @@ def main():
         # Parse arguments
         args = parser.parse_args()
 
+        # Check for config file and print message if provided
+        if args.config:
+            print(f"Using config file: {args.config}")
+
         # If no command was provided, show error and help
         if not args.command:
             display_command_error(parser, None, available_commands)
