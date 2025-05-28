@@ -15,6 +15,8 @@ a consistent user interface across the application.
 """
 
 import argparse
+import datetime
+import sys
 from abc import ABC, abstractmethod
 
 
@@ -98,21 +100,36 @@ class LogCommand(Command):
         return "Record time spent on a task"
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
-        """
-        Add log command-specific arguments to parser.
+        # Function to validate positive duration
+        def positive_float(value):
+            try:
+                fvalue = float(value)
+                if fvalue <= 0:
+                    raise argparse.ArgumentTypeError("Duration must be greater than 0.")
+                return fvalue
+            except ValueError:
+                raise argparse.ArgumentTypeError("Duration must be a number.")
 
-        Configure the parser with all arguments needed for the log command,
-        including required positional arguments and optional flags.
+        # Function to validate date format
+        def validate_date(value):
+            if not value:
+                return value
+            try:
+                date = datetime.date.fromisoformat(value.strip())
+                return date.isoformat()
+            except ValueError:
+                raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
 
-        Args:
-            parser: The argument parser to add arguments to.
-        """
-        # Positional arguments are already required by default
+        # Add arguments with validation
         parser.add_argument('task', help='Name of the task')
-        parser.add_argument('duration', type=float, help='Time spent on task (in hours)')
-        parser.add_argument('-c', '--category', help='Category of the task (e.g., work, personal, exercise)')
-        parser.add_argument('-d', '--description', help='Description of what was done')
-        parser.add_argument('--date', help='Date of the task (YYYY-MM-DD), defaults to today')
+        parser.add_argument('duration', type=positive_float,
+                            help='Time spent on task (in hours, must be positive)')
+        parser.add_argument('-c', '--category',
+                            help='Category of the task (e.g., work, personal, exercise)')
+        parser.add_argument('-d', '--description',
+                            help='Description of what was done')
+        parser.add_argument('--date', type=validate_date,
+                            help='Date of the task (YYYY-MM-DD), defaults to today')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -125,28 +142,33 @@ class LogCommand(Command):
         """
         from tracker import log_task
 
-        # Log the task and get the entry
-        entry = log_task(
-            task=args.task,
-            duration=args.duration,
-            category=args.category if hasattr(args, 'category') else None,
-            description=args.description if hasattr(args, 'description') else None,
-            date=args.date if hasattr(args, 'date') else None
-        )
+        try:
+            # Log the task with validation in log_task
+            entry = log_task(
+                task=args.task,
+                duration=args.duration,
+                category=args.category if hasattr(args, 'category') else None,
+                description=args.description if hasattr(args, 'description') else None,
+                date=args.date if hasattr(args, 'date') else None
+            )
 
-        # Print confirmation message
-        print(f"Logged {args.duration}h for '{args.task}'")
+            # Success output...
 
-        # Show category if available
-        if hasattr(args, 'category') and args.category:
-            print(f"Category: {args.category}")
+        except ValueError as e:
+            # Display a clear error message for validation errors
+            print(f"Error: {str(e)}")
+            sys.exit(1)
+        except Exception as e:
+            # Handle other unexpected errors with a generic message
+            print(f"Error: An unexpected error occurred: {str(e)}")
 
-        # Show date if available (either provided or default)
-        print(f"Date: {entry['date']}")
+            # Show stack trace in debug mode
+            if hasattr(args, 'debug') and args.debug:
+                import traceback
+                print("\nDebug information:")
+                print(traceback.format_exc())
 
-        # Display additional details if debug mode is enabled
-        if hasattr(args, 'debug') and args.debug:
-            print(f"Entry details: {entry}")
+            sys.exit(1)
 
 
 class ViewCommand(Command):

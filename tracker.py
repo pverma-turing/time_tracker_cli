@@ -37,6 +37,30 @@ def log_task(task: str, duration: float, category: str = None, description: str 
     Returns:
         Dict containing the logged entry (task, duration, timestamp, and optional fields)
     """
+    # Validate duration is positive
+    if duration <= 0:
+        raise ValueError("Duration must be greater than 0.")
+
+    # Trim whitespace from string inputs
+    task = task.strip() if task else task
+    category = category.strip() if category else category
+    description = description.strip() if description else description
+    date = date.strip() if date else date
+
+    # Validate task name is not empty after trimming
+    if not task:
+        raise ValueError("Task name cannot be empty.")
+
+    # Validate date format if provided
+    if date:
+        try:
+            # Try to parse the string as a ISO 8601 date
+            parsed_date = datetime.date.fromisoformat(date)
+            # Convert back to string to ensure consistent format
+            date = parsed_date.isoformat()
+        except ValueError:
+            raise ValueError("Invalid date format. Use YYYY-MM-DD.")
+
     # Create data directory if it doesn't exist
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
