@@ -19,6 +19,8 @@ import datetime
 import sys
 from abc import ABC, abstractmethod
 
+from utils import read_config_file
+
 
 class Command(ABC):
     """
@@ -142,15 +144,32 @@ class LogCommand(Command):
         """
         from tracker import log_task
 
+        # Configuration dictionary
+        config = None
+
         try:
-            # Log the task with validation in log_task
+            # Read config file if provided
+            if hasattr(args, 'config') and args.config:
+                try:
+                    config = read_config_file(args.config)
+                    if hasattr(args, 'debug') and args.debug:
+                        print(f"Using configuration from: {args.config}")
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"Warning: Could not read config file: {e}")
+
+            # Pass config to log_task
             entry = log_task(
                 task=args.task,
                 duration=args.duration,
                 category=args.category if hasattr(args, 'category') else None,
                 description=args.description if hasattr(args, 'description') else None,
-                date=args.date if hasattr(args, 'date') else None
+                date=args.date if hasattr(args, 'date') else None,
+                config=config
             )
+            # Enhanced debug output
+            if hasattr(args, 'debug') and args.debug:
+                if '_log_file' in entry:
+                    print(f"Log saved to: {entry['_log_file']}")
 
             # Success output...
 

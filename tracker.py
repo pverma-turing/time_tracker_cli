@@ -9,15 +9,42 @@ and maintains the correct format for task logs.
 import os
 import json
 import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # Ensure data directory exists
 DATA_DIR = "data"
-LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
+DEFAULT_LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
 
 
-def log_task(task: str, duration: float, category: str = None, description: str = None, date: str = None) -> Dict[
-    str, Any]:
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load configuration from a JSON file.
+    """
+    default_config = {
+        "log_file_path": DEFAULT_LOGS_FILE
+    }
+
+    if not config_path:
+        return default_config
+
+    try:
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+
+        # Merge with default config (to ensure all expected keys exist)
+        merged_config = {**default_config, **config_data}
+        return merged_config
+    except FileNotFoundError:
+        raise ValueError(f"Config file not found: {config_path}")
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid JSON in config file: {config_path}")
+    except Exception as e:
+        raise ValueError(f"Error loading config file: {str(e)}")
+
+
+# Updated function signature to accept config
+def log_task(task: str, duration: float, category: str = None, description: str = None,
+             date: str = None, config: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Log a task with its duration to persistent storage.
 
@@ -61,6 +88,18 @@ def log_task(task: str, duration: float, category: str = None, description: str 
         except ValueError:
             raise ValueError("Invalid date format. Use YYYY-MM-DD.")
 
+    # Determine which log file to use
+    log_file_path = DEFAULT_LOGS_FILE
+
+    # Use custom path from config if provided
+    if config and 'log_file_path' in config:
+        custom_path = config['log_file_path']
+        # Ensure the directory for the custom path exists
+        custom_dir = os.path.dirname(custom_path)
+        if custom_dir and not os.path.exists(custom_dir):
+            os.makedirs(custom_dir)
+        log_file_path = custom_path
+
     # Create data directory if it doesn't exist
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
@@ -84,9 +123,10 @@ def log_task(task: str, duration: float, category: str = None, description: str 
     if description:
         entry["description"] = description
 
+    entry['_log_file'] = log_file_path
     # Load existing logs or create empty list
     try:
-        with open(LOGS_FILE, 'r') as f:
+        with open(log_file_path, 'r') as f:
             logs = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         logs = []
@@ -95,7 +135,7 @@ def log_task(task: str, duration: float, category: str = None, description: str 
     logs.append(entry)
 
     # Write logs back to file
-    with open(LOGS_FILE, 'w') as f:
+    with open(log_file_path, 'w') as f:
         json.dump(logs, f, indent=2)
 
     return entry
