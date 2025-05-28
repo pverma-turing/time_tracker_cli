@@ -19,6 +19,7 @@ def load_logs(file_path: Optional[str] = None) -> List[Dict[str, Any]]:
     1. Checks if the specified file exists
     2. If it exists, loads and parses the JSON content
     3. If it doesn't exist, returns an empty list
+    4. Validates that the content is a list of dictionaries
 
     Args:
         file_path: Path to the logs file (defaults to "data/logs.json" if not provided)
@@ -27,7 +28,7 @@ def load_logs(file_path: Optional[str] = None) -> List[Dict[str, Any]]:
         List of task entry dictionaries
 
     Raises:
-        ValueError: If the file exists but contains invalid JSON
+        ValueError: If the file exists but contains invalid JSON or invalid format
     """
     # Use default path if none provided
     if file_path is None:
@@ -50,9 +51,18 @@ def load_logs(file_path: Optional[str] = None) -> List[Dict[str, Any]]:
         if not isinstance(logs, list):
             raise ValueError(f"Invalid log format in {file_path}. Expected a list of entries.")
 
+        # Validate that all entries are dictionaries with required fields
+        for i, entry in enumerate(logs):
+            if not isinstance(entry, dict):
+                raise ValueError(f"Entry at position {i} is not a valid task record.")
+            if 'task' not in entry:
+                raise ValueError(f"Entry at position {i} is missing required 'task' field.")
+            if 'duration' not in entry:
+                raise ValueError(f"Entry at position {i} is missing required 'duration' field.")
+
         return logs
-    except json.JSONDecodeError:
-        raise ValueError(f"Cannot parse logs file: {file_path}. The file contains invalid JSON.")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Cannot parse logs file: {file_path}. The file contains invalid JSON: {str(e)}")
 
 
 def save_logs(logs: List[Dict[str, Any]], file_path: Optional[str] = None) -> str:
@@ -87,3 +97,28 @@ def save_logs(logs: List[Dict[str, Any]], file_path: Optional[str] = None) -> st
         json.dump(logs, f, indent=2)
 
     return file_path
+
+
+def is_duplicate_entry(logs: List[Dict[str, Any]], new_entry: Dict[str, Any]) -> bool:
+    """
+    Check if an entry with the same task name, date and category already exists.
+
+    Args:
+        logs: List of existing log entries
+        new_entry: The new entry to check for duplicates
+
+    Returns:
+        True if a duplicate is found, False otherwise
+    """
+    task = new_entry.get('task', '')
+    date = new_entry.get('date', '')
+    category = new_entry.get('category', '')
+
+    # Look for an existing entry with the same key fields
+    for entry in logs:
+        if (entry.get('task', '') == task and
+                entry.get('date', '') == date and
+                entry.get('category', '') == category):
+            return True
+
+    return False

@@ -399,8 +399,31 @@ class ViewCommand(Command):
                     print(f"Warning: Could not read config file: {e}")
 
             # Load logs from the appropriate file
-            logs = load_logs(log_file_path)
+            try:
+                logs = load_logs(log_file_path)
+            except ValueError as e:
+                print(f"Error: Could not load logs — file is corrupted.")
+                if hasattr(args, 'debug') and args.debug:
+                    print(f"Debug details: {str(e)}")
+                sys.exit(1)
+
+            # Apply sorting and filtering
             logs = filter_and_sort_logs(logs, args)
+
+            # Collect active filters for display
+            active_filters = []
+            if hasattr(args, 'task') and args.task:
+                active_filters.append(f"task matching '{args.task}'")
+            if hasattr(args, 'category') and args.category:
+                active_filters.append(f"category '{args.category}'")
+            if hasattr(args, 'date') and args.date:
+                active_filters.append(f"date '{args.date}'")
+
+            # Display applied filters if any
+            if active_filters:
+                print(f"Filters applied: {', '.join(active_filters)}")
+                print()
+
             # Display logs in a tabular format
             if not logs:
                 print("No tasks found.")
