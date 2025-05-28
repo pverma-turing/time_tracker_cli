@@ -22,6 +22,78 @@ from typing import List, Dict, Any
 from utils import read_config_file
 
 
+def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any]]:
+    """
+    Filter and sort task logs based on command-line arguments.
+
+    This function applies various filters (task, category, date) and sorts
+    the logs by date and timestamp (newest first).
+
+    Args:
+        logs: List of task log entries
+        args: Command line arguments with optional filters
+
+    Returns:
+        Filtered and sorted list of log entries
+
+    Raises:
+        ValueError: If the date format is invalid
+    """
+    if not logs:
+        return logs
+
+    # Sort logs by date and timestamp (newest first)
+    logs.sort(key=lambda entry: (entry.get('date', ''), entry.get('timestamp', '')), reverse=True)
+
+    # Make a copy to avoid modifying the original list during iteration
+    filtered_logs = logs.copy()
+    active_filters = []
+    # Display logs in a tabular format
+    if not logs:
+        print("No tasks found.")
+    else:
+        print_task_table(logs)
+        print(f"\nTotal tasks shown: {len(logs)}")
+
+    # Filter by task name if specified (partial match)
+    if hasattr(args, 'task') and args.task:
+        active_filters.append(f"task matching '{args.task}'")
+        task_filter = args.task.lower()
+        filtered_logs = [entry for entry in filtered_logs
+                         if task_filter in entry.get('task', '').lower()]
+
+    # Filter by category if specified
+    if hasattr(args, 'category') and args.category:
+        active_filters.append(f"category '{args.category}'")
+        category_filter = args.category.lower()
+        filtered_logs = [entry for entry in filtered_logs
+                         if entry.get('category', '').lower() == category_filter]
+
+    # Filter by date if specified
+    if hasattr(args, 'date') and args.date:
+        active_filters.append(f"date '{args.date}'")
+        try:
+            # Validate date format by attempting to parse it
+            date_obj = datetime.date.fromisoformat(args.date)
+            date_str = date_obj.isoformat()  # Normalize to standard format
+            filtered_logs = [entry for entry in filtered_logs
+                             if entry.get('date', '') == date_str]
+        except ValueError:
+            raise ValueError(f"Invalid date format: '{args.date}'. Please use YYYY-MM-DD format.")
+
+    # Apply limit if specified
+    if hasattr(args, 'limit') and args.limit and args.limit > 0:
+        active_filters.append(f"limit '{args.limit}'")
+        filtered_logs = filtered_logs[:args.limit]  # Get the most recent entries up to the limit
+
+    # Display applied filters if any
+    if active_filters:
+        print(f"Filters applied: {', '.join(active_filters)}")
+        print()
+
+    return filtered_logs
+
+
 def print_task_table(logs: List[Dict[str, Any]]) -> None:
     """
     Print a formatted table of task entries.
@@ -34,7 +106,7 @@ def print_task_table(logs: List[Dict[str, Any]]) -> None:
     """
     # Define table headers and column widths
     headers = ["Task", "Duration", "Category", "Date", "Description"]
-    widths = [25, 10, 15, 12, 35]  # Default column widths
+    widths = [25, 10, 15, 12, 40]  # Wider description field as requested (40 chars)
 
     # Calculate total width for the table border
     total_width = sum(widths) + len(headers) * 3 - 2
@@ -87,6 +159,7 @@ def print_task_table(logs: List[Dict[str, Any]]) -> None:
 
     # Bottom border
     print(border)
+
 
 class Command(ABC):
     """
@@ -289,8 +362,8 @@ class ViewCommand(Command):
             parser: The argument parser to add arguments to.
         """
         parser.add_argument('-t', '--task', help='Filter entries by task name (partial match supported)')
-        parser.add_argument('-c', '--category', help='Filter entries by category')
-        parser.add_argument('-d', '--date', help='Filter entries by date (YYYY-MM-DD)')
+        parser.add_argument('-c', '--category', help='Filter entries by category (exact match)')
+        parser.add_argument('-d', '--date', help='Filter entries by exact date (YYYY-MM-DD)')
         parser.add_argument('-l', '--limit', type=int, help='Limit the number of entries shown')
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -327,34 +400,13 @@ class ViewCommand(Command):
 
             # Load logs from the appropriate file
             logs = load_logs(log_file_path)
-
-            # Apply filters if specified
-            if logs:
-                # Filter by task name if specified (partial match)
-                if hasattr(args, 'task') and args.task:
-                    task_filter = args.task.lower()
-                    logs = [entry for entry in logs if task_filter in entry.get('task', '').lower()]
-
-                # Filter by category if specified
-                if hasattr(args, 'category') and args.category:
-                    category_filter = args.category.lower()
-                    logs = [entry for entry in logs if
-                            entry.get('category', '').lower() == category_filter]
-
-                # Filter by date if specified
-                if hasattr(args, 'date') and args.date:
-                    logs = [entry for entry in logs if entry.get('date', '') == args.date]
-
-                # Apply limit if specified
-                if hasattr(args, 'limit') and args.limit and args.limit > 0:
-                    logs = logs[-args.limit:]  # Get the most recent entries up to the limit
-
+            logs = filter_and_sort_logs(logs, args)
             # Display logs in a tabular format
             if not logs:
                 print("No tasks found.")
             else:
                 print_task_table(logs)
-                print(f"\nTotal entries: {len(logs)}")
+                print(f"\nTotal tasks shown: {len(logs)}")
 
         except Exception as e:
             print(f"Error: {str(e)}")
@@ -402,7 +454,7 @@ class SummaryCommand(Command):
         parser.add_argument('--from-date', help='Start date for summary (YYYY-MM-DD)')
         parser.add_argument('--to-date', help='End date for summary (YYYY-MM-DD)')
         parser.add_argument('-g', '--group-by', choices=['task', 'day', 'week', 'month'],
-                           default='task', help='Group summary by category')
+                            default='task', help='Group summary by category')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
