@@ -1,52 +1,16 @@
 [
   {
-    "task": "Write docs",
-    "duration": 1.5,
-    "timestamp": "2025-05-28T15:06:50.216166"
+    "task": "API integration",
+    "duration": 3.5,
+    "date": "2025-05-27",
+    "timestamp": "2025-05-28T15:38:53.424854",
+    "category": "dev",
+    "description": "Integrated with payment API"
   },
   {
-    "task": "Fix bugs",
-    "duration": 0.75,
-    "timestamp": "2025-05-28T15:06:58.883491",
-    "description": "Fixed login issues"
-  },
-  {
-    "task": "Code review",
+    "task": "Meeting",
     "duration": 1.0,
-    "timestamp": "2025-05-28T15:07:05.200470",
-    "date": "2025-05-27"
-  },
-  {
-    "task": "Write docs",
-    "duration": 1.5,
-    "timestamp": "2025-05-28T15:08:27.174127"
-  },
-  {
-    "task": "Fix bugs",
-    "duration": 0.75,
-    "timestamp": "2025-05-28T15:08:32.848883",
-    "description": "Fixed login issues"
-  },
-  {
-    "task": "Code review",
-    "duration": 1.0,
-    "timestamp": "2025-05-28T15:08:36.327334",
-    "date": "2025-05-27"
-  },
-  {
-    "task": "Fix bugs",
-    "duration": 0.75,
-    "timestamp": "2025-05-28T15:16:29.999359"
-  },
-  {
-    "task": "Fix bugs",
-    "duration": 0.75,
-    "timestamp": "2025-05-28T15:19:46.365637"
-  },
-  {
-    "task": "Fix bugs",
-    "duration": 0.75,
-    "timestamp": "2025-05-28T15:20:10.761091",
-    "description": "Fixed login issues"
+    "date": "2025-05-28",
+    "timestamp": "2025-05-28T15:39:06.040231"
   }
 ]

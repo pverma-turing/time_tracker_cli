@@ -110,6 +110,7 @@ class LogCommand(Command):
         # Positional arguments are already required by default
         parser.add_argument('task', help='Name of the task')
         parser.add_argument('duration', type=float, help='Time spent on task (in hours)')
+        parser.add_argument('-c', '--category', help='Category of the task (e.g., work, personal, exercise)')
         parser.add_argument('-d', '--description', help='Description of what was done')
         parser.add_argument('--date', help='Date of the task (YYYY-MM-DD), defaults to today')
 
@@ -128,12 +129,20 @@ class LogCommand(Command):
         entry = log_task(
             task=args.task,
             duration=args.duration,
+            category=args.category if hasattr(args, 'category') else None,
             description=args.description if hasattr(args, 'description') else None,
             date=args.date if hasattr(args, 'date') else None
         )
 
         # Print confirmation message
         print(f"Logged {args.duration}h for '{args.task}'")
+
+        # Show category if available
+        if hasattr(args, 'category') and args.category:
+            print(f"Category: {args.category}")
+
+        # Show date if available (either provided or default)
+        print(f"Date: {entry['date']}")
 
         # Display additional details if debug mode is enabled
         if hasattr(args, 'debug') and args.debug:

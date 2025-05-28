@@ -16,7 +16,8 @@ DATA_DIR = "data"
 LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
 
 
-def log_task(task: str, duration: float, description: str = None, date: str = None) -> Dict[str, Any]:
+def log_task(task: str, duration: float, category: str = None, description: str = None, date: str = None) -> Dict[
+    str, Any]:
     """
     Log a task with its duration to persistent storage.
 
@@ -29,27 +30,35 @@ def log_task(task: str, duration: float, description: str = None, date: str = No
     Args:
         task: Name of the task being logged
         duration: Time spent on the task in hours
+        category: Optional category of the task (e.g., work, personal, exercise)
+        description: Optional description of the task
+        date: Optional date in YYYY-MM-DD format (defaults to today)
 
     Returns:
-        Dict containing the logged entry (task, duration, timestamp)
+        Dict containing the logged entry (task, duration, timestamp, and optional fields)
     """
     # Create data directory if it doesn't exist
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
 
-    # Create log entry with current timestamp in ISO 8601 format
-    timestamp = datetime.datetime.now().isoformat()
+    # Generate the current timestamp and today's date if needed
+    current_timestamp = datetime.datetime.now().isoformat()
+    today_date = datetime.date.today().isoformat()
+
+    # Create log entry with required fields
     entry = {
         "task": task,
         "duration": duration,
-        "timestamp": timestamp
+        "date": date if date else today_date,  # Always include date (today if not provided)
+        "timestamp": current_timestamp
     }
+
     # Add optional fields if provided
+    if category:
+        entry["category"] = category
+
     if description:
         entry["description"] = description
-
-    if date:
-        entry["date"] = date
 
     # Load existing logs or create empty list
     try:
