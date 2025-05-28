@@ -122,8 +122,22 @@ class LogCommand(Command):
         Args:
             args: Parsed command-line arguments including task, duration, etc.
         """
-        print(f"[Placeholder] Logging {args.duration} hours for task '{args.task}'")
-        # Actual implementation will be added later
+        from tracker import log_task
+
+        # Log the task and get the entry
+        entry = log_task(
+            task=args.task,
+            duration=args.duration,
+            description=args.description if hasattr(args, 'description') else None,
+            date=args.date if hasattr(args, 'date') else None
+        )
+
+        # Print confirmation message
+        print(f"Logged {args.duration}h for '{args.task}'")
+
+        # Display additional details if debug mode is enabled
+        if hasattr(args, 'debug') and args.debug:
+            print(f"Entry details: {entry}")
 
 
 class ViewCommand(Command):
