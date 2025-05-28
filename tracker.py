@@ -7,39 +7,12 @@ and maintains the correct format for task logs.
 """
 
 import os
-import json
 import datetime
 from typing import Dict, Any, Optional
 
 # Ensure data directory exists
 DATA_DIR = "data"
 DEFAULT_LOGS_FILE = os.path.join(DATA_DIR, "logs.json")
-
-
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Load configuration from a JSON file.
-    """
-    default_config = {
-        "log_file_path": DEFAULT_LOGS_FILE
-    }
-
-    if not config_path:
-        return default_config
-
-    try:
-        with open(config_path, 'r') as f:
-            config_data = json.load(f)
-
-        # Merge with default config (to ensure all expected keys exist)
-        merged_config = {**default_config, **config_data}
-        return merged_config
-    except FileNotFoundError:
-        raise ValueError(f"Config file not found: {config_path}")
-    except json.JSONDecodeError:
-        raise ValueError(f"Invalid JSON in config file: {config_path}")
-    except Exception as e:
-        raise ValueError(f"Error loading config file: {str(e)}")
 
 
 # Updated function signature to accept config
@@ -125,17 +98,9 @@ def log_task(task: str, duration: float, category: str = None, description: str 
 
     entry['_log_file'] = log_file_path
     # Load existing logs or create empty list
-    try:
-        with open(log_file_path, 'r') as f:
-            logs = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logs = []
+    from storage import load_logs, save_logs
 
-    # Append new entry
+    logs = load_logs(log_file_path)
     logs.append(entry)
-
-    # Write logs back to file
-    with open(log_file_path, 'w') as f:
-        json.dump(logs, f, indent=2)
-
+    save_logs(logs, log_file_path)
     return entry
