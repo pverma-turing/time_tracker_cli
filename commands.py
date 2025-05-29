@@ -15,7 +15,150 @@ a consistent user interface across the application.
 """
 
 import argparse
+import datetime
+import sys
 from abc import ABC, abstractmethod
+from typing import List, Dict, Any
+from utils import read_config_file
+
+
+def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any]]:
+    """
+    Filter and sort task logs based on command-line arguments.
+
+    This function applies various filters (task, category, date) and sorts
+    the logs by date and timestamp (newest first).
+
+    Args:
+        logs: List of task log entries
+        args: Command line arguments with optional filters
+
+    Returns:
+        Filtered and sorted list of log entries
+
+    Raises:
+        ValueError: If the date format is invalid
+    """
+    if not logs:
+        return logs
+
+    # Sort logs by date and timestamp (newest first)
+    logs.sort(key=lambda entry: (entry.get('date', ''), entry.get('timestamp', '')), reverse=True)
+
+    # Make a copy to avoid modifying the original list during iteration
+    filtered_logs = logs.copy()
+    active_filters = []
+    # Display logs in a tabular format
+    if not logs:
+        print("No tasks found.")
+    else:
+        print_task_table(logs)
+        print(f"\nTotal tasks shown: {len(logs)}")
+
+    # Filter by task name if specified (partial match)
+    if hasattr(args, 'task') and args.task:
+        active_filters.append(f"task matching '{args.task}'")
+        task_filter = args.task.lower()
+        filtered_logs = [entry for entry in filtered_logs
+                         if task_filter in entry.get('task', '').lower()]
+
+    # Filter by category if specified
+    if hasattr(args, 'category') and args.category:
+        active_filters.append(f"category '{args.category}'")
+        category_filter = args.category.lower()
+        filtered_logs = [entry for entry in filtered_logs
+                         if entry.get('category', '').lower() == category_filter]
+
+    # Filter by date if specified
+    if hasattr(args, 'date') and args.date:
+        active_filters.append(f"date '{args.date}'")
+        try:
+            # Validate date format by attempting to parse it
+            date_obj = datetime.date.fromisoformat(args.date)
+            date_str = date_obj.isoformat()  # Normalize to standard format
+            filtered_logs = [entry for entry in filtered_logs
+                             if entry.get('date', '') == date_str]
+        except ValueError:
+            raise ValueError(f"Invalid date format: '{args.date}'. Please use YYYY-MM-DD format.")
+
+    # Apply limit if specified
+    if hasattr(args, 'limit') and args.limit and args.limit > 0:
+        active_filters.append(f"limit '{args.limit}'")
+        filtered_logs = filtered_logs[:args.limit]  # Get the most recent entries up to the limit
+
+    # Display applied filters if any
+    if active_filters:
+        print(f"Filters applied: {', '.join(active_filters)}")
+        print()
+
+    return filtered_logs
+
+
+def print_task_table(logs: List[Dict[str, Any]]) -> None:
+    """
+    Print a formatted table of task entries.
+
+    This function creates a clean tabular representation of task logs
+    with columns aligned and proper headers.
+
+    Args:
+        logs: List of task entry dictionaries to display
+    """
+    # Define table headers and column widths
+    headers = ["Task", "Duration", "Category", "Date", "Description"]
+    widths = [25, 10, 15, 12, 40]  # Wider description field as requested (40 chars)
+
+    # Calculate total width for the table border
+    total_width = sum(widths) + len(headers) * 3 - 2
+
+    # Create header row with border
+    header_row = "| " + " | ".join(h.ljust(w) for h, w in zip(headers, widths)) + " |"
+    border = "+" + "-" * (total_width) + "+"
+
+    print(border)
+    print(header_row)
+    print(border.replace("-", "="))  # Use '=' for header separator
+
+    # Print each task entry as a row
+    for entry in logs:
+        # Extract values with defaults for missing fields
+        task = entry.get('task', '')
+
+        # Format duration with 2 decimal places
+        duration_val = entry.get('duration', 0)
+        duration = f"{duration_val:.2f}h"
+
+        category = entry.get('category', '')
+        if not category:
+            category = "-"
+
+        date = entry.get('date', '')
+
+        description = entry.get('description', '')
+        if not description:
+            description = "-"
+
+        # Truncate long values and add ellipsis
+        if len(task) > widths[0] - 3:
+            task = task[:widths[0] - 3] + "..."
+        if len(category) > widths[2] - 3:
+            category = category[:widths[2] - 3] + "..."
+        if len(description) > widths[4] - 3:
+            description = description[:widths[4] - 3] + "..."
+
+        # Format the row
+        row = [
+            task.ljust(widths[0]),
+            duration.ljust(widths[1]),
+            category.ljust(widths[2]),
+            date.ljust(widths[3]),
+            description.ljust(widths[4])
+        ]
+
+        print("| " + " | ".join(row) + " |")
+
+    # Bottom border
+    print(border)
 
 
 class Command(ABC):
@@ -98,20 +241,36 @@ class LogCommand(Command):
         return "Record time spent on a task"
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
-        """
-        Add log command-specific arguments to parser.
+        # Function to validate positive duration
+        def positive_float(value):
+            try:
+                fvalue = float(value)
+                if fvalue <= 0:
+                    raise argparse.ArgumentTypeError("Duration must be greater than 0.")
+                return fvalue
+            except ValueError:
+                raise argparse.ArgumentTypeError("Duration must be a number.")
 
-        Configure the parser with all arguments needed for the log command,
-        including required positional arguments and optional flags.
+        # Function to validate date format
+        def validate_date(value):
+            if not value:
+                return value
+            try:
+                date = datetime.date.fromisoformat(value.strip())
+                return date.isoformat()
+            except ValueError:
+                raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
 
-        Args:
-            parser: The argument parser to add arguments to.
-        """
-        # Positional arguments are already required by default
+        # Add arguments with validation
         parser.add_argument('task', help='Name of the task')
-        parser.add_argument('duration', type=float, help='Time spent on task (in hours)')
-        parser.add_argument('-d', '--description', help='Description of what was done')
-        parser.add_argument('--date', help='Date of the task (YYYY-MM-DD), defaults to today')
+        parser.add_argument('duration', type=positive_float,
+                            help='Time spent on task (in hours, must be positive)')
+        parser.add_argument('-c', '--category',
+                            help='Category of the task (e.g., work, personal, exercise)')
+        parser.add_argument('-d', '--description',
+                            help='Description of what was done')
+        parser.add_argument('--date', type=validate_date,
+                            help='Date of the task (YYYY-MM-DD), defaults to today')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -122,8 +281,52 @@ class LogCommand(Command):
         Args:
             args: Parsed command-line arguments including task, duration, etc.
         """
-        print(f"[Placeholder] Logging {args.duration} hours for task '{args.task}'")
-        # Actual implementation will be added later
+        from tracker import log_task
+
+        # Configuration dictionary
+        config = None
+
+        try:
+            # Read config file if provided
+            if hasattr(args, 'config') and args.config:
+                try:
+                    config = read_config_file(args.config)
+                    if hasattr(args, 'debug') and args.debug:
+                        print(f"Using configuration from: {args.config}")
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"Warning: Could not read config file: {e}")
+
+            # Pass config to log_task
+            entry = log_task(
+                task=args.task,
+                duration=args.duration,
+                category=args.category if hasattr(args, 'category') else None,
+                description=args.description if hasattr(args, 'description') else None,
+                date=args.date if hasattr(args, 'date') else None,
+                config=config
+            )
+            # Enhanced debug output
+            if hasattr(args, 'debug') and args.debug:
+                if '_log_file' in entry:
+                    print(f"Log saved to: {entry['_log_file']}")
+
+            # Success output...
+
+        except ValueError as e:
+            # Display a clear error message for validation errors
+            print(f"Error: {str(e)}")
+            sys.exit(1)
+        except Exception as e:
+            # Handle other unexpected errors with a generic message
+            print(f"Error: An unexpected error occurred: {str(e)}")
+
+            # Show stack trace in debug mode
+            if hasattr(args, 'debug') and args.debug:
+                import traceback
+                print("\nDebug information:")
+                print(traceback.format_exc())
+
+            sys.exit(1)
 
 
 class ViewCommand(Command):
@@ -158,8 +361,9 @@ class ViewCommand(Command):
         Args:
             parser: The argument parser to add arguments to.
         """
-        parser.add_argument('-t', '--task', help='Filter entries by task name')
-        parser.add_argument('-d', '--date', help='Filter entries by date (YYYY-MM-DD)')
+        parser.add_argument('-t', '--task', help='Filter entries by task name (partial match supported)')
+        parser.add_argument('-c', '--category', help='Filter entries by category (exact match)')
+        parser.add_argument('-d', '--date', help='Filter entries by exact date (YYYY-MM-DD)')
         parser.add_argument('-l', '--limit', type=int, help='Limit the number of entries shown')
 
     def execute(self, args: argparse.Namespace) -> None:
@@ -171,8 +375,72 @@ class ViewCommand(Command):
         Args:
             args: Parsed command-line arguments including filter options.
         """
-        print("[Placeholder] Viewing time entries")
-        # Actual implementation will be added later
+        import sys
+        from storage import load_logs
+        from utils import read_config_file
+
+        try:
+            # Configuration dictionary
+            config = None
+            log_file_path = None
+
+            # Read config file if provided
+            if hasattr(args, 'config') and args.config:
+                try:
+                    config = read_config_file(args.config)
+                    if 'log_file_path' in config:
+                        log_file_path = config['log_file_path']
+
+                    if hasattr(args, 'debug') and args.debug:
+                        print(f"Using configuration from: {args.config}")
+                        if log_file_path:
+                            print(f"Using log file: {log_file_path}")
+                except (FileNotFoundError, ValueError) as e:
+                    print(f"Warning: Could not read config file: {e}")
+
+            # Load logs from the appropriate file
+            try:
+                logs = load_logs(log_file_path)
+            except ValueError as e:
+                print(f"Error: Could not load logs — file is corrupted.")
+                if hasattr(args, 'debug') and args.debug:
+                    print(f"Debug details: {str(e)}")
+                sys.exit(1)
+
+            # Apply sorting and filtering
+            logs = filter_and_sort_logs(logs, args)
+
+            # Collect active filters for display
+            active_filters = []
+            if hasattr(args, 'task') and args.task:
+                active_filters.append(f"task matching '{args.task}'")
+            if hasattr(args, 'category') and args.category:
+                active_filters.append(f"category '{args.category}'")
+            if hasattr(args, 'date') and args.date:
+                active_filters.append(f"date '{args.date}'")
+
+            # Display applied filters if any
+            if active_filters:
+                print(f"Filters applied: {', '.join(active_filters)}")
+                print()
+
+            # Display logs in a tabular format
+            if not logs:
+                print("No tasks found.")
+            else:
+                print_task_table(logs)
+                print(f"\nTotal tasks shown: {len(logs)}")
+
+        except Exception as e:
+            print(f"Error: {str(e)}")
+
+            # Show stack trace in debug mode
+            if hasattr(args, 'debug') and args.debug:
+                import traceback
+                print("\nDebug information:")
+                print(traceback.format_exc())
+
+            sys.exit(1)
 
 
 class SummaryCommand(Command):
@@ -209,7 +477,7 @@ class SummaryCommand(Command):
         parser.add_argument('--from-date', help='Start date for summary (YYYY-MM-DD)')
         parser.add_argument('--to-date', help='End date for summary (YYYY-MM-DD)')
         parser.add_argument('-g', '--group-by', choices=['task', 'day', 'week', 'month'],
-                           default='task', help='Group summary by category')
+                            default='task', help='Group summary by category')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
