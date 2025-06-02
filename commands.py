@@ -24,26 +24,31 @@ from storage import load_logs
 from utils import read_config_file
 
 
-def summarize_by_category(logs: List[dict]) -> Dict[str, int]:
+def summarize_by_category(logs: List[dict], category: str = None) -> Dict[str, int]:
     """
     Summarize time spent by category.
 
     Args:
         logs: List of time entry dictionaries
+        category: Optional category to filter by
 
     Returns:
         Dictionary with categories as keys and total minutes as values
     """
+    # Filter logs by category if specified
+    if category is not None:
+        logs = [entry for entry in logs if entry.get('category') == category]
+
     summary = {}
     for entry in logs:
-        category = entry.get('category')
+        entry_category = entry.get('category')
         # Convert duration to minutes (assuming duration is stored in hours)
         minutes = int(float(entry['duration']) * 60)
 
-        if category in summary:
-            summary[category] += minutes
+        if entry_category in summary:
+            summary[entry_category] += minutes
         else:
-            summary[category] = minutes
+            summary[entry_category] = minutes
 
     return summary
 
@@ -504,6 +509,10 @@ class SummaryCommand(Command):
         parser.add_argument('--to-date', help='End date for summary (YYYY-MM-DD)')
         parser.add_argument('-g', '--group-by', choices=['task', 'day', 'week', 'month'],
                             default='task', help='Group summary by category')
+        parser.add_argument('--category',
+                          help='Filter logs by category',
+                          type=str,
+                          required=False)
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -516,15 +525,27 @@ class SummaryCommand(Command):
             args: Parsed command-line arguments including date ranges and grouping.
         """
         logs = load_logs()
+        category = args.category if hasattr(args, 'category') else None
+        # If no logs found, show message and exit
         # If no logs found, show message and exit
         if not logs:
             print("No time entries found.")
             return
 
-        # Summarize by category
-        category_summary = summarize_by_category(logs)
+        # Summarize by category, applying filter if provided
+        category_summary = summarize_by_category(logs, category)
 
-        # Print the summary
-        print("Summary by category:")
+        # Print the summary with appropriate heading
+        if category:
+            print(f"Summary for category '{category}':")
+        else:
+            print("Summary by category:")
+
+        # Check if we have results
+        if not category_summary:
+            print(f"No entries found{' for the specified category' if category else ''}.")
+            return
+
+        # Display results
         for category, minutes in category_summary.items():
             print(f"{category}: {minutes} minutes")
