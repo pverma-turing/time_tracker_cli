@@ -19,7 +19,33 @@ import datetime
 import sys
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
+
+from storage import load_logs
 from utils import read_config_file
+
+
+def summarize_by_category(logs: List[dict]) -> Dict[str, int]:
+    """
+    Summarize time spent by category.
+
+    Args:
+        logs: List of time entry dictionaries
+
+    Returns:
+        Dictionary with categories as keys and total minutes as values
+    """
+    summary = {}
+    for entry in logs:
+        category = entry.get('category')
+        # Convert duration to minutes (assuming duration is stored in hours)
+        minutes = int(float(entry['duration']) * 60)
+
+        if category in summary:
+            summary[category] += minutes
+        else:
+            summary[category] = minutes
+
+    return summary
 
 
 def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any]]:
@@ -489,5 +515,16 @@ class SummaryCommand(Command):
         Args:
             args: Parsed command-line arguments including date ranges and grouping.
         """
-        print("[Placeholder] Generating time summary")
-        # Actual implementation will be added later
+        logs = load_logs()
+        # If no logs found, show message and exit
+        if not logs:
+            print("No time entries found.")
+            return
+
+        # Summarize by category
+        category_summary = summarize_by_category(logs)
+
+        # Print the summary
+        print("Summary by category:")
+        for category, minutes in category_summary.items():
+            print(f"{category}: {minutes} minutes")
