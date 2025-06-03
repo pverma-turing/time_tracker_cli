@@ -24,16 +24,16 @@ from storage import load_logs
 from utils import read_config_file
 
 
-def summarize_by_category(logs: List[dict], category: str = None) -> Dict[str, int]:
+def summarize_by_category_and_task(logs, category=None):
     """
-    Summarize time spent by category.
+    Summarize time spent by category and task.
 
     Args:
         logs: List of time entry dictionaries
         category: Optional category to filter by
 
     Returns:
-        Dictionary with categories as keys and total minutes as values
+        Dictionary with categories as keys and dictionaries of tasks and minutes as values
     """
     # Filter logs by category if specified
     if category is not None:
@@ -41,14 +41,21 @@ def summarize_by_category(logs: List[dict], category: str = None) -> Dict[str, i
 
     summary = {}
     for entry in logs:
-        entry_category = entry.get('category')
+        entry_category = entry.get('category', 'general')
+        task_name = entry.get('task', 'Unnamed')
         # Convert duration to minutes (assuming duration is stored in hours)
-        minutes = int(float(entry['duration']) * 60)
+        minutes = int(float(entry.get('duration', 0)) * 60)
 
-        if entry_category in summary:
-            summary[entry_category] += minutes
-        else:
-            summary[entry_category] = minutes
+        # Initialize category if not exists
+        if entry_category not in summary:
+            summary[entry_category] = {}
+
+        # Initialize task if not exists
+        if task_name not in summary[entry_category]:
+            summary[entry_category][task_name] = 0
+
+        # Add minutes to task
+        summary[entry_category][task_name] += minutes
 
     return summary
 
@@ -532,8 +539,8 @@ class SummaryCommand(Command):
             print("No time entries found.")
             return
 
-        # Summarize by category, applying filter if provided
-        category_summary = summarize_by_category(logs, category)
+        # Summarize by category and task, applying filter if provided
+        detailed_summary = summarize_by_category_and_task(logs, category)
 
         # Print the summary with appropriate heading
         if category:
@@ -542,10 +549,19 @@ class SummaryCommand(Command):
             print("Summary by category:")
 
         # Check if we have results
-        if not category_summary:
+        if not detailed_summary:
             print(f"No entries found{' for the specified category' if category else ''}.")
             return
 
-        # Display results
-        for category, minutes in category_summary.items():
-            print(f"{category}: {minutes} minutes")
+        # Display results with nested task details
+        for category, tasks in detailed_summary.items():
+            # Calculate total minutes for the category
+            category_total = sum(tasks.values())
+            print(f"\n{category}: {category_total} minutes")
+
+            # Sort tasks by duration in descending order
+            sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+            # Display each task with indentation
+            for task_name, minutes in sorted_tasks:
+                print(f"  - {task_name}: {minutes} minutes")
