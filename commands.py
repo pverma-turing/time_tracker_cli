@@ -22,7 +22,53 @@ from typing import List, Dict, Any
 
 from storage import load_logs
 from utils import read_config_file
+import csv
 
+def export_summary_to_csv(summary, category=None, csv_filename='summary.csv'):
+    """
+    Export summary data to a CSV file.
+
+    Args:
+        summary: Dictionary with categories as keys and dictionaries of tasks and minutes as values
+        category: Optional category used for filtering
+        csv_filename: Name of the CSV file to create
+
+    Returns:
+        Tuple of (success_flag, message)
+    """
+    try:
+        with open(csv_filename, 'w', newline='') as csvfile:
+            # Create CSV writer
+            csv_writer = csv.writer(csvfile)
+
+            # Write headers
+            if category:
+                # If we're filtering by a specific category, we're just showing tasks
+                csv_writer.writerow(['task', 'total_minutes'])
+
+                # Sort tasks by time in descending order and write rows
+                for task, minutes in sorted(summary[category].items(), key=lambda x: x[1], reverse=True):
+                    csv_writer.writerow([task, minutes])
+            else:
+                # If we're showing all categories, include category and total time
+                csv_writer.writerow(['category', 'task', 'total_minutes'])
+
+                # Write category summaries and their tasks
+                for category_name, tasks in summary.items():
+                    # Sort tasks by time in descending order
+                    sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+                    # If there are no tasks in this category (shouldn't happen), skip
+                    if not sorted_tasks:
+                        continue
+
+                    # Write each task with its category
+                    for task, minutes in sorted_tasks:
+                        csv_writer.writerow([category_name, task, minutes])
+
+        return True, f"Summary exported to {csv_filename}"
+    except Exception as e:
+        return False, f"Error exporting summary to CSV: {str(e)}"
 
 def validate_top_parameter(top):
     """
@@ -557,6 +603,7 @@ class SummaryCommand(Command):
         parser.add_argument('--by', choices=['task', 'category'],
                                     default='category', help='Group results by task or category')
         parser.add_argument('--top', type=int, help='Show only top N results by time spent')
+        parser.add_argument('--csv', action='store_true', help='Export results to summary.csv')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -571,6 +618,7 @@ class SummaryCommand(Command):
         logs = load_logs()
         category = args.category if hasattr(args, 'category') else None
         grouping = getattr(args, 'by', 'category')
+        export_csv = getattr(args, 'csv', False)
         # Validate and store the top parameter
         top = None
         if hasattr(args, 'top'):
@@ -593,6 +641,21 @@ class SummaryCommand(Command):
         if not detailed_summary:
             print(f"No entries found{' for the specified category' if category else ''}.")
             return
+
+        # Export to CSV if requested
+        if export_csv:
+            success, message = export_summary_to_csv(detailed_summary, category)
+            print(message)
+            if not success:
+                # If CSV export fails, still proceed with console output
+                print("Falling back to console output.")
+
+        # Print the summary with appropriate heading (unless we're only exporting to CSV)
+        if not export_csv or not success:
+            if category:
+                print(f"Summary for category '{category}':")
+            else:
+                print("Summary by category:")
 
         # Display results with nested task details
         for category, tasks in detailed_summary.items():
