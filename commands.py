@@ -24,13 +24,38 @@ from storage import load_logs
 from utils import read_config_file
 
 
-def summarize_by_category_and_task(logs, category=None):
+def validate_top_parameter(top):
+    """
+    Validate the top parameter.
+
+    Args:
+        top: The top parameter value to validate
+
+    Returns:
+        None if invalid, otherwise the validated integer value
+    """
+    if top is None:
+        return None
+
+    try:
+        top_int = int(top)
+        if top_int <= 0:
+            print(f"Warning: --top value must be positive. Showing all results.")
+            return None
+        return top_int
+    except ValueError:
+        print(f"Warning: --top value must be an integer. Showing all results.")
+        return None
+
+
+def summarize_by_category_and_task(logs, category=None, top=None):
     """
     Summarize time spent by category and task.
 
     Args:
         logs: List of time entry dictionaries
         category: Optional category to filter by
+        top: Optional limit to show only top N results
 
     Returns:
         Dictionary with categories as keys and dictionaries of tasks and minutes as values
@@ -56,6 +81,15 @@ def summarize_by_category_and_task(logs, category=None):
 
         # Add minutes to task
         summary[entry_category][task_name] += minutes
+
+    # If we need to limit to top categories
+    if top is not None and not category:
+        # Calculate total minutes per category
+        category_totals = {cat: sum(tasks.values()) for cat, tasks in summary.items()}
+        # Sort categories by total time and get top N
+        top_categories = sorted(category_totals.items(), key=lambda x: x[1], reverse=True)[:top]
+        # Filter summary to include only top categories
+        summary = {cat: summary[cat] for cat, _ in top_categories}
 
     return summary
 
@@ -520,6 +554,9 @@ class SummaryCommand(Command):
                           help='Filter logs by category',
                           type=str,
                           required=False)
+        parser.add_argument('--by', choices=['task', 'category'],
+                                    default='category', help='Group results by task or category')
+        parser.add_argument('--top', type=int, help='Show only top N results by time spent')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -533,14 +570,18 @@ class SummaryCommand(Command):
         """
         logs = load_logs()
         category = args.category if hasattr(args, 'category') else None
-        # If no logs found, show message and exit
+        grouping = getattr(args, 'by', 'category')
+        # Validate and store the top parameter
+        top = None
+        if hasattr(args, 'top'):
+            top = validate_top_parameter(args.top)
         # If no logs found, show message and exit
         if not logs:
             print("No time entries found.")
             return
 
         # Summarize by category and task, applying filter if provided
-        detailed_summary = summarize_by_category_and_task(logs, category)
+        detailed_summary = summarize_by_category_and_task(logs, category, top)
 
         # Print the summary with appropriate heading
         if category:
@@ -561,6 +602,10 @@ class SummaryCommand(Command):
 
             # Sort tasks by duration in descending order
             sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+            # Apply top limit to tasks if specified and we're looking at a specific category
+            if top is not None and category:
+                sorted_tasks = sorted_tasks[:top]
 
             # Display each task with indentation
             for task_name, minutes in sorted_tasks:
