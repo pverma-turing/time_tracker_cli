@@ -24,6 +24,7 @@ from storage import load_logs
 from utils import read_config_file
 import csv
 
+
 def export_summary_to_csv(summary, category=None, csv_filename='summary.csv'):
     """
     Export summary data to a CSV file.
@@ -70,6 +71,7 @@ def export_summary_to_csv(summary, category=None, csv_filename='summary.csv'):
     except Exception as e:
         return False, f"Error exporting summary to CSV: {str(e)}"
 
+
 def validate_top_parameter(top):
     """
     Validate the top parameter.
@@ -94,7 +96,29 @@ def validate_top_parameter(top):
         return None
 
 
-def summarize_by_category_and_task(logs, category=None, top=None):
+# Date validation function
+def validate_date(date_str):
+    """
+    Validate and parse a date string in YYYY-MM-DD format.
+
+    Args:
+        date_str: Date string to validate
+
+    Returns:
+        Parsed date object if valid, None otherwise
+    """
+    if not date_str:
+        return None
+
+    try:
+        # Parse the date string (YYYY-MM-DD format)
+        parsed_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        return parsed_date
+    except ValueError:
+        return None
+
+
+def summarize_by_category_and_task(logs, category=None, top=None, start_date=None, end_date=None):
     """
     Summarize time spent by category and task.
 
@@ -102,18 +126,43 @@ def summarize_by_category_and_task(logs, category=None, top=None):
         logs: List of time entry dictionaries
         category: Optional category to filter by
         top: Optional limit to show only top N results
+        start_date: Optional start date for filtering (inclusive)
+        end_date: Optional end date for filtering (inclusive)
 
     Returns:
         Dictionary with categories as keys and dictionaries of tasks and minutes as values
     """
-    # Filter logs by category if specified
+    # First, filter logs by date range if specified
+    if start_date or end_date:
+        filtered_logs = []
+        for entry in logs:
+            try:
+                # Parse the timestamp (assumed to be ISO format)
+                entry_date = datetime.datetime.fromisoformat(entry.get('date', '')).date()
+
+                # Check if the entry falls within the date range
+                if start_date and entry_date < start_date:
+                    continue
+                if end_date and entry_date > end_date:
+                    continue
+
+                # If we get here, the entry is within the date range
+                filtered_logs.append(entry)
+            except (ValueError, TypeError):
+                # Skip entries with invalid timestamps
+                continue
+
+        # Replace the original logs with the filtered ones
+        logs = filtered_logs
+
+    # Then filter by category if specified
     if category is not None:
         logs = [entry for entry in logs if entry.get('category') == category]
 
     summary = {}
     for entry in logs:
         entry_category = entry.get('category', 'general')
-        task_name = entry.get('task', 'Unnamed')
+        task_name = entry.get('name', 'Unnamed')
         # Convert duration to minutes (assuming duration is stored in hours)
         minutes = int(float(entry.get('duration', 0)) * 60)
 
@@ -192,7 +241,7 @@ def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any
         active_filters.append(f"date '{args.date}'")
         try:
             # Validate date format by attempting to parse it
-            date_obj = datetime.date.fromisoformat(args.date)
+            date_obj = datetime.datetime.date.fromisoformat(args.date)
             date_str = date_obj.isoformat()  # Normalize to standard format
             filtered_logs = [entry for entry in filtered_logs
                              if entry.get('date', '') == date_str]
@@ -374,7 +423,7 @@ class LogCommand(Command):
             if not value:
                 return value
             try:
-                date = datetime.date.fromisoformat(value.strip())
+                date = datetime.datetime.date.fromisoformat(value.strip())
                 return date.isoformat()
             except ValueError:
                 raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
@@ -597,13 +646,15 @@ class SummaryCommand(Command):
         parser.add_argument('-g', '--group-by', choices=['task', 'day', 'week', 'month'],
                             default='task', help='Group summary by category')
         parser.add_argument('--category',
-                          help='Filter logs by category',
-                          type=str,
-                          required=False)
+                            help='Filter logs by category',
+                            type=str,
+                            required=False)
         parser.add_argument('--by', choices=['task', 'category'],
-                                    default='category', help='Group results by task or category')
+                            default='category', help='Group results by task or category')
         parser.add_argument('--top', type=int, help='Show only top N results by time spent')
         parser.add_argument('--csv', action='store_true', help='Export results to summary.csv')
+        parser.add_argument('--start-date', help='Filter logs starting from this date (YYYY-MM-DD)')
+        parser.add_argument('--end-date', help='Filter logs until this date (YYYY-MM-DD)')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -619,6 +670,26 @@ class SummaryCommand(Command):
         category = args.category if hasattr(args, 'category') else None
         grouping = getattr(args, 'by', 'category')
         export_csv = getattr(args, 'csv', False)
+        # Validate and store date range parameters
+        start_date = None
+        end_date = None
+        date_filter_error = None
+
+        if hasattr(args, 'start_date') and args.start_date:
+            start_date = validate_date(args.start_date)
+            if start_date is None:
+                date_filter_error = f"Invalid start date format: '{args.start_date}'. Use YYYY-MM-DD."
+
+        if hasattr(args, 'end_date') and args.end_date and not date_filter_error:
+            end_date = validate_date(args.end_date)
+            if end_date is None:
+                date_filter_error = f"Invalid end date format: '{args.end_date}'. Use YYYY-MM-DD."
+
+        # Check if end_date is before start_date
+        if start_date and end_date and end_date < start_date:
+            date_filter_error = "End date cannot be earlier than start date."
+
+
         # Validate and store the top parameter
         top = None
         if hasattr(args, 'top'):
@@ -628,8 +699,15 @@ class SummaryCommand(Command):
             print("No time entries found.")
             return
 
+        # Build date range string for output
+        date_range_str = ""
+        if start_date:
+            date_range_str += f" from {start_date.isoformat()}"
+        if end_date:
+            date_range_str += f" to {end_date.isoformat()}"
+
         # Summarize by category and task, applying filter if provided
-        detailed_summary = summarize_by_category_and_task(logs, category, top)
+        detailed_summary = summarize_by_category_and_task(logs, category, top, start_date, end_date)
 
         # Print the summary with appropriate heading
         if category:
@@ -653,9 +731,9 @@ class SummaryCommand(Command):
         # Print the summary with appropriate heading (unless we're only exporting to CSV)
         if not export_csv or not success:
             if category:
-                print(f"Summary for category '{category}':")
+                print(f"Summary for category '{category}'{date_range_str}:")
             else:
-                print("Summary by category:")
+                print(f"Summary by category{date_range_str}:")
 
         # Display results with nested task details
         for category, tasks in detailed_summary.items():
