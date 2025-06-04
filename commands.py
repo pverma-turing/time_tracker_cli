@@ -16,6 +16,7 @@ a consistent user interface across the application.
 
 import argparse
 import datetime
+import json
 import sys
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
@@ -162,7 +163,7 @@ def summarize_by_category_and_task(logs, category=None, top=None, start_date=Non
     summary = {}
     for entry in logs:
         entry_category = entry.get('category', 'general')
-        task_name = entry.get('name', 'Unnamed')
+        task_name = entry.get('task', 'Unnamed')
         # Convert duration to minutes (assuming duration is stored in hours)
         minutes = int(float(entry.get('duration', 0)) * 60)
 
@@ -327,6 +328,72 @@ def print_task_table(logs: List[Dict[str, Any]]) -> None:
     # Bottom border
     print(border)
 
+
+def format_summary_as_json(summary, category=None):
+    """
+    Format summary data as a structured JSON object.
+
+    Args:
+        summary: Dictionary with categories as keys and dictionaries of tasks and minutes as values
+        category: Optional category used for filtering
+
+    Returns:
+        Dictionary formatted for JSON output
+    """
+    result = {}
+
+    if category:
+        # If we're filtering by a specific category, create a single category object
+        result = {
+            "category": category,
+            "total_minutes": sum(summary[category].values()),
+            "tasks": []
+        }
+
+        # Sort tasks by minutes in descending order
+        sorted_tasks = sorted(summary[category].items(), key=lambda x: x[1], reverse=True)
+
+        # Add task details
+        for task_name, minutes in sorted_tasks:
+            result["tasks"].append({
+                "name": task_name,
+                "minutes": minutes
+            })
+    else:
+        # If we're showing all categories, create a list of category objects
+        result = {
+            "categories": []
+        }
+
+        # Calculate total minutes per category for sorting
+        category_totals = {cat: sum(tasks.values()) for cat, tasks in summary.items()}
+
+        # Sort categories by total minutes in descending order
+        sorted_categories = sorted(summary.items(),
+                                   key=lambda x: sum(x[1].values()),
+                                   reverse=True)
+
+        # Add category details with their tasks
+        for category_name, tasks in sorted_categories:
+            category_data = {
+                "name": category_name,
+                "total_minutes": sum(tasks.values()),
+                "tasks": []
+            }
+
+            # Sort tasks by minutes in descending order
+            sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+            # Add task details
+            for task_name, minutes in sorted_tasks:
+                category_data["tasks"].append({
+                    "name": task_name,
+                    "minutes": minutes
+                })
+
+            result["categories"].append(category_data)
+
+    return result
 
 class Command(ABC):
     """
@@ -655,6 +722,8 @@ class SummaryCommand(Command):
         parser.add_argument('--csv', action='store_true', help='Export results to summary.csv')
         parser.add_argument('--start-date', help='Filter logs starting from this date (YYYY-MM-DD)')
         parser.add_argument('--end-date', help='Filter logs until this date (YYYY-MM-DD)')
+        parser.add_argument('--json', action='store_true',
+                            help='Output results as a JSON object instead of formatted text')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -670,6 +739,7 @@ class SummaryCommand(Command):
         category = args.category if hasattr(args, 'category') else None
         grouping = getattr(args, 'by', 'category')
         export_csv = getattr(args, 'csv', False)
+        output_json = getattr(args, 'json', False)
         # Validate and store date range parameters
         start_date = None
         end_date = None
@@ -730,6 +800,25 @@ class SummaryCommand(Command):
 
         # Print the summary with appropriate heading (unless we're only exporting to CSV)
         if not export_csv or not success:
+            if category:
+                print(f"Summary for category '{category}'{date_range_str}:")
+            else:
+                print(f"Summary by category{date_range_str}:")
+
+        # Output as JSON if requested
+        if output_json:
+            try:
+                # Format the summary data as JSON
+                json_data = format_summary_as_json(detailed_summary, category)
+                # Print the JSON with pretty formatting (indent)
+                print(json.dumps(json_data, indent=2))
+            except Exception as e:
+                print(f"Error generating JSON output: {str(e)}")
+                # Fall back to text output
+                output_json = False
+
+        # Print the summary with appropriate heading if not outputting JSON
+        if not output_json:
             if category:
                 print(f"Summary for category '{category}'{date_range_str}:")
             else:
