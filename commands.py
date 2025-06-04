@@ -16,10 +16,178 @@ a consistent user interface across the application.
 
 import argparse
 import datetime
+import json
 import sys
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
+
+from storage import load_logs
 from utils import read_config_file
+import csv
+
+
+def export_summary_to_csv(summary, category=None, csv_filename='summary.csv'):
+    """
+    Export summary data to a CSV file.
+
+    Args:
+        summary: Dictionary with categories as keys and dictionaries of tasks and minutes as values
+        category: Optional category used for filtering
+        csv_filename: Name of the CSV file to create
+
+    Returns:
+        Tuple of (success_flag, message)
+    """
+    try:
+        with open(csv_filename, 'w', newline='') as csvfile:
+            # Create CSV writer
+            csv_writer = csv.writer(csvfile)
+
+            # Write headers
+            if category:
+                # If we're filtering by a specific category, we're just showing tasks
+                csv_writer.writerow(['task', 'total_minutes'])
+
+                # Sort tasks by time in descending order and write rows
+                for task, minutes in sorted(summary[category].items(), key=lambda x: x[1], reverse=True):
+                    csv_writer.writerow([task, minutes])
+            else:
+                # If we're showing all categories, include category and total time
+                csv_writer.writerow(['category', 'task', 'total_minutes'])
+
+                # Write category summaries and their tasks
+                for category_name, tasks in summary.items():
+                    # Sort tasks by time in descending order
+                    sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+                    # If there are no tasks in this category (shouldn't happen), skip
+                    if not sorted_tasks:
+                        continue
+
+                    # Write each task with its category
+                    for task, minutes in sorted_tasks:
+                        csv_writer.writerow([category_name, task, minutes])
+
+        return True, f"Summary exported to {csv_filename}"
+    except Exception as e:
+        return False, f"Error exporting summary to CSV: {str(e)}"
+
+
+def validate_top_parameter(top):
+    """
+    Validate the top parameter.
+
+    Args:
+        top: The top parameter value to validate
+
+    Returns:
+        None if invalid, otherwise the validated integer value
+    """
+    if top is None:
+        return None
+
+    try:
+        top_int = int(top)
+        if top_int <= 0:
+            print(f"Warning: --top value must be positive. Showing all results.")
+            return None
+        return top_int
+    except ValueError:
+        print(f"Warning: --top value must be an integer. Showing all results.")
+        return None
+
+
+# Date validation function
+def validate_date(date_str):
+    """
+    Validate and parse a date string in YYYY-MM-DD format.
+
+    Args:
+        date_str: Date string to validate
+
+    Returns:
+        Parsed date object if valid, None otherwise
+    """
+    if not date_str:
+        return None
+
+    try:
+        # Parse the date string (YYYY-MM-DD format)
+        parsed_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        return parsed_date
+    except ValueError:
+        return None
+
+
+def summarize_by_category_and_task(logs, category=None, top=None, start_date=None, end_date=None):
+    """
+    Summarize time spent by category and task.
+
+    Args:
+        logs: List of time entry dictionaries
+        category: Optional category to filter by
+        top: Optional limit to show only top N results
+        start_date: Optional start date for filtering (inclusive)
+        end_date: Optional end date for filtering (inclusive)
+
+    Returns:
+        Dictionary with categories as keys and dictionaries of tasks and minutes as values
+    """
+    # First, filter logs by date range if specified
+    if start_date or end_date:
+        filtered_logs = []
+        for entry in logs:
+            try:
+                # Parse the timestamp (assumed to be ISO format)
+                entry_date = datetime.datetime.fromisoformat(entry.get('date', '')).date()
+
+                # Check if the entry falls within the date range
+                if start_date and entry_date < start_date:
+                    continue
+                if end_date and entry_date > end_date:
+                    continue
+
+                # If we get here, the entry is within the date range
+                filtered_logs.append(entry)
+            except (ValueError, TypeError):
+                # Skip entries with invalid timestamps
+                continue
+
+        # Replace the original logs with the filtered ones
+        logs = filtered_logs
+
+    # Then filter by category if specified
+    if category is not None:
+        logs = [entry for entry in logs if entry.get('category') == category]
+
+    summary = {}
+    for entry in logs:
+        entry_category = entry.get('category', 'general')
+        task_name = entry.get('task', 'Unnamed')
+        # Convert duration to minutes (assuming duration is stored in hours)
+        minutes = int(float(entry.get('duration', 0)) * 60)
+
+        # Initialize category if not exists
+        if entry_category not in summary:
+            summary[entry_category] = {}
+
+        # Initialize task if not exists
+        if task_name not in summary[entry_category]:
+            summary[entry_category][task_name] = 0
+
+        # Add minutes to task
+        summary[entry_category][task_name] += minutes
+
+    # If we need to limit to top categories
+    if top is not None and not category:
+        # Calculate total minutes per category
+        category_totals = {cat: sum(tasks.values()) for cat, tasks in summary.items()}
+        # Sort categories by total time and get top N
+        top_categories = sorted(category_totals.items(), key=lambda x: x[1], reverse=True)[:top]
+        # Filter summary to include only top categories
+        summary = {cat: summary[cat] for cat, _ in top_categories}
+
+    return summary
 
 
 def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any]]:
@@ -74,7 +242,7 @@ def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any
         active_filters.append(f"date '{args.date}'")
         try:
             # Validate date format by attempting to parse it
-            date_obj = datetime.date.fromisoformat(args.date)
+            date_obj = datetime.datetime.date.fromisoformat(args.date)
             date_str = date_obj.isoformat()  # Normalize to standard format
             filtered_logs = [entry for entry in filtered_logs
                              if entry.get('date', '') == date_str]
@@ -160,6 +328,72 @@ def print_task_table(logs: List[Dict[str, Any]]) -> None:
     # Bottom border
     print(border)
 
+
+def format_summary_as_json(summary, category=None):
+    """
+    Format summary data as a structured JSON object.
+
+    Args:
+        summary: Dictionary with categories as keys and dictionaries of tasks and minutes as values
+        category: Optional category used for filtering
+
+    Returns:
+        Dictionary formatted for JSON output
+    """
+    result = {}
+
+    if category:
+        # If we're filtering by a specific category, create a single category object
+        result = {
+            "category": category,
+            "total_minutes": sum(summary[category].values()),
+            "tasks": []
+        }
+
+        # Sort tasks by minutes in descending order
+        sorted_tasks = sorted(summary[category].items(), key=lambda x: x[1], reverse=True)
+
+        # Add task details
+        for task_name, minutes in sorted_tasks:
+            result["tasks"].append({
+                "name": task_name,
+                "minutes": minutes
+            })
+    else:
+        # If we're showing all categories, create a list of category objects
+        result = {
+            "categories": []
+        }
+
+        # Calculate total minutes per category for sorting
+        category_totals = {cat: sum(tasks.values()) for cat, tasks in summary.items()}
+
+        # Sort categories by total minutes in descending order
+        sorted_categories = sorted(summary.items(),
+                                   key=lambda x: sum(x[1].values()),
+                                   reverse=True)
+
+        # Add category details with their tasks
+        for category_name, tasks in sorted_categories:
+            category_data = {
+                "name": category_name,
+                "total_minutes": sum(tasks.values()),
+                "tasks": []
+            }
+
+            # Sort tasks by minutes in descending order
+            sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+            # Add task details
+            for task_name, minutes in sorted_tasks:
+                category_data["tasks"].append({
+                    "name": task_name,
+                    "minutes": minutes
+                })
+
+            result["categories"].append(category_data)
+
+    return result
 
 class Command(ABC):
     """
@@ -256,7 +490,7 @@ class LogCommand(Command):
             if not value:
                 return value
             try:
-                date = datetime.date.fromisoformat(value.strip())
+                date = datetime.datetime.date.fromisoformat(value.strip())
                 return date.isoformat()
             except ValueError:
                 raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
@@ -478,6 +712,18 @@ class SummaryCommand(Command):
         parser.add_argument('--to-date', help='End date for summary (YYYY-MM-DD)')
         parser.add_argument('-g', '--group-by', choices=['task', 'day', 'week', 'month'],
                             default='task', help='Group summary by category')
+        parser.add_argument('--category',
+                            help='Filter logs by category',
+                            type=str,
+                            required=False)
+        parser.add_argument('--by', choices=['task', 'category'],
+                            default='category', help='Group results by task or category')
+        parser.add_argument('--top', type=int, help='Show only top N results by time spent')
+        parser.add_argument('--csv', action='store_true', help='Export results to summary.csv')
+        parser.add_argument('--start-date', help='Filter logs starting from this date (YYYY-MM-DD)')
+        parser.add_argument('--end-date', help='Filter logs until this date (YYYY-MM-DD)')
+        parser.add_argument('--json', action='store_true',
+                            help='Output results as a JSON object instead of formatted text')
 
     def execute(self, args: argparse.Namespace) -> None:
         """
@@ -489,5 +735,108 @@ class SummaryCommand(Command):
         Args:
             args: Parsed command-line arguments including date ranges and grouping.
         """
-        print("[Placeholder] Generating time summary")
-        # Actual implementation will be added later
+        logs = load_logs()
+        category = args.category if hasattr(args, 'category') else None
+        grouping = getattr(args, 'by', 'category')
+        export_csv = getattr(args, 'csv', False)
+        output_json = getattr(args, 'json', False)
+        # Validate and store date range parameters
+        start_date = None
+        end_date = None
+        date_filter_error = None
+
+        if hasattr(args, 'start_date') and args.start_date:
+            start_date = validate_date(args.start_date)
+            if start_date is None:
+                date_filter_error = f"Invalid start date format: '{args.start_date}'. Use YYYY-MM-DD."
+
+        if hasattr(args, 'end_date') and args.end_date and not date_filter_error:
+            end_date = validate_date(args.end_date)
+            if end_date is None:
+                date_filter_error = f"Invalid end date format: '{args.end_date}'. Use YYYY-MM-DD."
+
+        # Check if end_date is before start_date
+        if start_date and end_date and end_date < start_date:
+            date_filter_error = "End date cannot be earlier than start date."
+
+
+        # Validate and store the top parameter
+        top = None
+        if hasattr(args, 'top'):
+            top = validate_top_parameter(args.top)
+        # If no logs found, show message and exit
+        if not logs:
+            print("No time entries found.")
+            return
+
+        # Build date range string for output
+        date_range_str = ""
+        if start_date:
+            date_range_str += f" from {start_date.isoformat()}"
+        if end_date:
+            date_range_str += f" to {end_date.isoformat()}"
+
+        # Summarize by category and task, applying filter if provided
+        detailed_summary = summarize_by_category_and_task(logs, category, top, start_date, end_date)
+
+        # Print the summary with appropriate heading
+        if category:
+            print(f"Summary for category '{category}':")
+        else:
+            print("Summary by category:")
+
+        # Check if we have results
+        if not detailed_summary:
+            print(f"No entries found{' for the specified category' if category else ''}.")
+            return
+
+        # Export to CSV if requested
+        if export_csv:
+            success, message = export_summary_to_csv(detailed_summary, category)
+            print(message)
+            if not success:
+                # If CSV export fails, still proceed with console output
+                print("Falling back to console output.")
+
+        # Print the summary with appropriate heading (unless we're only exporting to CSV)
+        if not export_csv or not success:
+            if category:
+                print(f"Summary for category '{category}'{date_range_str}:")
+            else:
+                print(f"Summary by category{date_range_str}:")
+
+        # Output as JSON if requested
+        if output_json:
+            try:
+                # Format the summary data as JSON
+                json_data = format_summary_as_json(detailed_summary, category)
+                # Print the JSON with pretty formatting (indent)
+                print(json.dumps(json_data, indent=2))
+            except Exception as e:
+                print(f"Error generating JSON output: {str(e)}")
+                # Fall back to text output
+                output_json = False
+
+        # Print the summary with appropriate heading if not outputting JSON
+        if not output_json:
+            if category:
+                print(f"Summary for category '{category}'{date_range_str}:")
+            else:
+                print(f"Summary by category{date_range_str}:")
+
+        # Display results with nested task details
+        for category, tasks in detailed_summary.items():
+            # Calculate total minutes for the category
+            category_total = sum(tasks.values())
+            print(f"\n{category}: {category_total} minutes")
+
+            # Sort tasks by duration in descending order
+            sorted_tasks = sorted(tasks.items(), key=lambda x: x[1], reverse=True)
+
+            # Apply top limit to tasks if specified and we're looking at a specific category
+            if top is not None and category:
+                sorted_tasks = sorted_tasks[:top]
+
+            # Display each task with indentation
+            for task_name, minutes in sorted_tasks:
+                print(f"  - {task_name}: {minutes} minutes")
