@@ -395,6 +395,7 @@ def format_summary_as_json(summary, category=None):
 
     return result
 
+
 class Command(ABC):
     """
     Base command interface following the Command design pattern.
@@ -759,7 +760,6 @@ class SummaryCommand(Command):
         if start_date and end_date and end_date < start_date:
             date_filter_error = "End date cannot be earlier than start date."
 
-
         # Validate and store the top parameter
         top = None
         if hasattr(args, 'top'):
@@ -840,3 +840,72 @@ class SummaryCommand(Command):
             # Display each task with indentation
             for task_name, minutes in sorted_tasks:
                 print(f"  - {task_name}: {minutes} minutes")
+
+
+class ReportCommand:
+    """Command to export time entries to a CSV file."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Generate reports of tracked time"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """
+        Add report command-specific arguments to parser.
+
+        Configure the parser with all arguments needed for generating summary reports,
+        including date range and grouping options.
+
+        Args:
+            parser: The argument parser to add arguments to.
+        """
+        parser.add_argument('--output', help='Output CSV file name (default: logs_report.csv)')
+
+    def execute(self, args):
+        """Execute the report command with the given arguments."""
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            print("No logs found.")
+            return
+
+        # Determine output filename
+        output_file = args.output if args.output else "logs_report.csv"
+
+        try:
+            # Export to CSV
+            self._export_to_csv(logs, output_file)
+            print(f"Report saved to {output_file}.")
+        except IOError as e:
+            print(f"Error saving report: {str(e)}")
+
+    def _get_logs(self):
+        """Retrieve all time entries from storage."""
+        # This implementation should use the same storage mechanism as other commands
+        # For example, using the existing storage module:
+        from storage import load_logs
+        return load_logs()
+
+    def _export_to_csv(self, logs, output_file):
+        """Export time entries to a CSV file."""
+        with open(output_file, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+
+            # Write header row
+            writer.writerow(['date', 'task', 'duration', 'category', 'description'])
+
+            # Write data rows
+            for entry in logs:
+                writer.writerow([
+                    entry['date'],
+                    entry['task'],
+                    entry['duration'],
+                    entry.get('category', ''),
+                    entry.get('description', ''),
+                ])
