@@ -873,6 +873,7 @@ class ReportCommand:
                                    default='date', help='Sort logs by field (default: date)')
         parser.add_argument('--columns',
                                    help='Comma-separated list of columns to include (default: all columns)')
+        parser.add_argument('--min-duration', type=int, help='Minimum task duration in minutes to include')
 
 
     def execute(self, args):
@@ -950,11 +951,33 @@ class ReportCommand:
             filter_applied = True
             filters_applied.append(f"category={args.category}")
 
+        # Apply minimum duration filter if specified
+        if hasattr(args, 'min_duration') and args.min_duration is not None:
+            try:
+                min_duration = self._validate_min_duration(args.min_duration)
+                # Convert min_duration from minutes to hours for comparison with log.duration
+                min_duration_hours = min_duration / 60.0
+                filtered_logs = [log for log in filtered_logs if float(log['duration']) >= min_duration_hours]
+                filter_applied = True
+                filters_applied.append(f"min_duration={args.min_duration} minutes")
+            except ValueError as e:
+                raise ValueError(f"Invalid minimum duration: {str(e)}")
+
         # Log filter usage information
         if filter_applied:
             print(f"Applied filters: {', '.join(filters_applied)}")
 
         return filtered_logs
+
+    def _validate_min_duration(self, min_duration):
+        """Validate minimum duration value."""
+        if not isinstance(min_duration, int):
+            raise ValueError("Minimum duration must be an integer")
+
+        if min_duration < 0:
+            raise ValueError("Minimum duration cannot be negative")
+
+        return min_duration
 
     def _sort_logs(self, logs, args):
         """Sort logs based on the provided sort-by parameter."""
