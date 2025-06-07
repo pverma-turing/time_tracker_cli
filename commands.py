@@ -844,7 +844,7 @@ class SummaryCommand(Command):
 
 class ReportCommand:
     """Command to export time entries to a CSV file."""
-
+    VALID_SORT_OPTIONS = ['date', 'category', 'duration']
     def get_short_description(self) -> str:
         """
         Return a short description for the summary command.
@@ -868,6 +868,8 @@ class ReportCommand:
         parser.add_argument('--start-date', help='Start date for filtering logs (YYYY-MM-DD)')
         parser.add_argument('--end-date', help='End date for filtering logs (YYYY-MM-DD)')
         parser.add_argument('--category', help='Filter logs by category')
+        parser.add_argument('--sort-by', choices=['date', 'category', 'duration'],
+                                   default='date', help='Sort logs by field (default: date)')
 
     def execute(self, args):
         """Execute the report command with the given arguments."""
@@ -881,6 +883,9 @@ class ReportCommand:
         # Apply filters if specified
         try:
             filtered_logs = self._apply_filters(logs, args)
+
+            # Apply sorting
+            sorted_logs = self._sort_logs(filtered_logs, args)
 
             # Determine output filename
             output_file = args.output if args.output else "logs_report.csv"
@@ -947,6 +952,27 @@ class ReportCommand:
             print(f"Applied filters: {', '.join(filters_applied)}")
 
         return filtered_logs
+
+    def _sort_logs(self, logs, args):
+        """Sort logs based on the provided sort-by parameter."""
+        sort_by = args.sort_by if hasattr(args, 'sort_by') and args.sort_by else 'date'
+
+        if sort_by not in self.VALID_SORT_OPTIONS:
+            raise ValueError(
+                f"Invalid sort option: '{sort_by}'. Valid options are: {', '.join(self.VALID_SORT_OPTIONS)}")
+
+        if sort_by == 'date':
+            return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
+        elif sort_by == 'category':
+            # Sort by category, placing None/empty categories at the end
+            return sorted(logs, key=lambda log: ('category' not in log or log['category'] is None,
+                                                 log.get('category', '') or ''))
+        elif sort_by == 'duration':
+            # Sort by duration in descending order (higher duration first)
+            return sorted(logs, key=lambda log: float(log['duration']), reverse=True)
+
+        # Default fallback to date sorting (shouldn't reach here due to validation)
+        return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
 
     def _validate_date(self, date_str):
         """Validate and parse date string in YYYY-MM-DD format."""
