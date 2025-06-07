@@ -845,6 +845,7 @@ class SummaryCommand(Command):
 class ReportCommand:
     """Command to export time entries to a CSV file."""
     VALID_SORT_OPTIONS = ['date', 'category', 'duration']
+    VALID_COLUMNS = ['date', 'task', 'duration', 'category', 'description']
     def get_short_description(self) -> str:
         """
         Return a short description for the summary command.
@@ -870,6 +871,9 @@ class ReportCommand:
         parser.add_argument('--category', help='Filter logs by category')
         parser.add_argument('--sort-by', choices=['date', 'category', 'duration'],
                                    default='date', help='Sort logs by field (default: date)')
+        parser.add_argument('--columns',
+                                   help='Comma-separated list of columns to include (default: all columns)')
+
 
     def execute(self, args):
         """Execute the report command with the given arguments."""
@@ -887,11 +891,14 @@ class ReportCommand:
             # Apply sorting
             sorted_logs = self._sort_logs(filtered_logs, args)
 
+            # Parse and validate requested columns
+            columns = self._parse_columns(args)
+
             # Determine output filename
             output_file = args.output if args.output else "logs_report.csv"
 
             # Export to CSV
-            self._export_to_csv(filtered_logs, output_file)
+            self._export_to_csv(filtered_logs, output_file, columns)
 
             # Prepare feedback message
             message = f"Report saved to {output_file}."
@@ -916,6 +923,7 @@ class ReportCommand:
         """Apply filters based on command arguments."""
         filtered_logs = logs
         filter_applied = False
+        filters_applied = []
 
         # Apply date range filters if specified
         if args.start_date:
@@ -923,6 +931,7 @@ class ReportCommand:
                 start_date = self._validate_date(args.start_date)
                 filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) >= start_date]
                 filter_applied = True
+                filters_applied.append(f"start_date={args.start_date}")
             except ValueError as e:
                 raise ValueError(f"Invalid start date: {str(e)}")
 
@@ -931,6 +940,7 @@ class ReportCommand:
                 end_date = self._validate_date(args.end_date)
                 filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) <= end_date]
                 filter_applied = True
+                filters_applied.append(f"end_date={args.end_date}")
             except ValueError as e:
                 raise ValueError(f"Invalid end date: {str(e)}")
 
@@ -938,17 +948,10 @@ class ReportCommand:
         if args.category:
             filtered_logs = [log for log in filtered_logs if log.get('category', '') == args.category]
             filter_applied = True
+            filters_applied.append(f"category={args.category}")
 
         # Log filter usage information
         if filter_applied:
-            filters_applied = []
-            if args.start_date:
-                filters_applied.append(f"start_date={args.start_date}")
-            if args.end_date:
-                filters_applied.append(f"end_date={args.end_date}")
-            if args.category:
-                filters_applied.append(f"category={args.category}")
-
             print(f"Applied filters: {', '.join(filters_applied)}")
 
         return filtered_logs
@@ -974,6 +977,23 @@ class ReportCommand:
         # Default fallback to date sorting (shouldn't reach here due to validation)
         return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
 
+    def _parse_columns(self, args):
+        """Parse and validate the columns argument."""
+        # Use default columns if not specified
+        if not hasattr(args, 'columns') or not args.columns:
+            return self.VALID_COLUMNS
+
+        # Parse the comma-separated list
+        requested_columns = [col.strip().lower() for col in args.columns.split(',')]
+
+        # Validate the requested columns
+        unknown_columns = [col for col in requested_columns if col not in self.VALID_COLUMNS]
+        if unknown_columns:
+            raise ValueError(
+                f"Unknown column(s): {', '.join(unknown_columns)}. Valid columns are: {', '.join(self.VALID_COLUMNS)}")
+
+        return requested_columns
+
     def _validate_date(self, date_str):
         """Validate and parse date string in YYYY-MM-DD format."""
         try:
@@ -990,23 +1010,29 @@ class ReportCommand:
             # This is a fallback and should be aligned with the actual date format used in the app
             return datetime.datetime.strptime("1970-01-01", "%Y-%m-%d")  # Use a default date in the past
 
-    def _export_to_csv(self, logs, output_file):
-        """Export time entries to a CSV file."""
+    def _export_to_csv(self, logs, output_file, columns):
+        """Export time entries to a CSV file with the specified columns."""
         try:
             with open(output_file, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
 
-                # Write header row
-                writer.writerow(['date', 'task', 'duration', 'category', 'description'])
+                # Write header row with selected columns
+                writer.writerow(columns)
 
-                # Write data rows
+                # Write data rows with only the selected columns
                 for entry in logs:
-                    writer.writerow([
-                        entry['date'],
-                        entry['task'],
-                        entry['duration'],
-                        entry.get('category', ''),
-                        entry.get('description', ''),
-                    ])
+                    row = []
+                    for col in columns:
+                        if col == 'date':
+                            row.append(entry['date'])
+                        elif col == 'task':
+                            row.append(entry['task'])
+                        elif col == 'duration':
+                            row.append(entry['duration'])
+                        elif col == 'category':
+                            row.append(entry.get('category', ''))
+                        elif col == 'description':
+                            row.append(entry.get('description', ''))
+                    writer.writerow(row)
         except IOError as e:
             raise IOError(f"Failed to write CSV file: {str(e)}")
