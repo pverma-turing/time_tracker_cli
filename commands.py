@@ -865,6 +865,9 @@ class ReportCommand:
             parser: The argument parser to add arguments to.
         """
         parser.add_argument('--output', help='Output CSV file name (default: logs_report.csv)')
+        parser.add_argument('--start-date', help='Start date for filtering logs (YYYY-MM-DD)')
+        parser.add_argument('--end-date', help='End date for filtering logs (YYYY-MM-DD)')
+        parser.add_argument('--category', help='Filter logs by category')
 
     def execute(self, args):
         """Execute the report command with the given arguments."""
@@ -875,15 +878,27 @@ class ReportCommand:
             print("No logs found.")
             return
 
-        # Determine output filename
-        output_file = args.output if args.output else "logs_report.csv"
-
+        # Apply filters if specified
         try:
+            filtered_logs = self._apply_filters(logs, args)
+
+            # Determine output filename
+            output_file = args.output if args.output else "logs_report.csv"
+
             # Export to CSV
-            self._export_to_csv(logs, output_file)
-            print(f"Report saved to {output_file}.")
-        except IOError as e:
-            print(f"Error saving report: {str(e)}")
+            self._export_to_csv(filtered_logs, output_file)
+
+            # Prepare feedback message
+            message = f"Report saved to {output_file}."
+            if len(filtered_logs) == 0:
+                message += " (No entries matched the filters)"
+            elif len(filtered_logs) < len(logs):
+                message += f" ({len(filtered_logs)} of {len(logs)} entries exported after filtering)"
+
+            print(message)
+
+        except ValueError as e:
+            print(f"Error: {str(e)}")
 
     def _get_logs(self):
         """Retrieve all time entries from storage."""
@@ -892,20 +907,80 @@ class ReportCommand:
         from storage import load_logs
         return load_logs()
 
+    def _apply_filters(self, logs, args):
+        """Apply filters based on command arguments."""
+        filtered_logs = logs
+        filter_applied = False
+
+        # Apply date range filters if specified
+        if args.start_date:
+            try:
+                start_date = self._validate_date(args.start_date)
+                filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) >= start_date]
+                filter_applied = True
+            except ValueError as e:
+                raise ValueError(f"Invalid start date: {str(e)}")
+
+        if args.end_date:
+            try:
+                end_date = self._validate_date(args.end_date)
+                filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) <= end_date]
+                filter_applied = True
+            except ValueError as e:
+                raise ValueError(f"Invalid end date: {str(e)}")
+
+        # Apply category filter if specified
+        if args.category:
+            filtered_logs = [log for log in filtered_logs if log.get('category', '') == args.category]
+            filter_applied = True
+
+        # Log filter usage information
+        if filter_applied:
+            filters_applied = []
+            if args.start_date:
+                filters_applied.append(f"start_date={args.start_date}")
+            if args.end_date:
+                filters_applied.append(f"end_date={args.end_date}")
+            if args.category:
+                filters_applied.append(f"category={args.category}")
+
+            print(f"Applied filters: {', '.join(filters_applied)}")
+
+        return filtered_logs
+
+    def _validate_date(self, date_str):
+        """Validate and parse date string in YYYY-MM-DD format."""
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Date must be in YYYY-MM-DD format, got '{date_str}'")
+
+    def _date_to_datetime(self, date_str):
+        """Convert date string to datetime object for comparison."""
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            # In case the log date is in a different format, handle gracefully
+            # This is a fallback and should be aligned with the actual date format used in the app
+            return datetime.datetime.strptime("1970-01-01", "%Y-%m-%d")  # Use a default date in the past
+
     def _export_to_csv(self, logs, output_file):
         """Export time entries to a CSV file."""
-        with open(output_file, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
+        try:
+            with open(output_file, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
 
-            # Write header row
-            writer.writerow(['date', 'task', 'duration', 'category', 'description'])
+                # Write header row
+                writer.writerow(['date', 'task', 'duration', 'category', 'description'])
 
-            # Write data rows
-            for entry in logs:
-                writer.writerow([
-                    entry['date'],
-                    entry['task'],
-                    entry['duration'],
-                    entry.get('category', ''),
-                    entry.get('description', ''),
-                ])
+                # Write data rows
+                for entry in logs:
+                    writer.writerow([
+                        entry['date'],
+                        entry['task'],
+                        entry['duration'],
+                        entry.get('category', ''),
+                        entry.get('description', ''),
+                    ])
+        except IOError as e:
+            raise IOError(f"Failed to write CSV file: {str(e)}")
