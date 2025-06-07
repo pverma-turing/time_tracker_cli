@@ -845,6 +845,7 @@ class SummaryCommand(Command):
 class ReportCommand:
     """Command to export time entries to a CSV file."""
     VALID_SORT_OPTIONS = ['date', 'category', 'duration']
+    VALID_SORT_ORDERS = ['asc', 'desc']
     VALID_COLUMNS = ['date', 'task', 'duration', 'category', 'description']
 
     def get_short_description(self) -> str:
@@ -871,7 +872,9 @@ class ReportCommand:
         parser.add_argument('--end-date', help='End date for filtering logs (YYYY-MM-DD)')
         parser.add_argument('--category', help='Filter logs by category')
         parser.add_argument('--sort-by', choices=['date', 'category', 'duration'],
-                                   default='date', help='Sort logs by field (default: date)')
+                            default='date', help='Sort logs by field (default: date)')
+        parser.add_argument('--sort-order', choices=['asc', 'desc'],
+                            default='desc', help='Sort order: ascending or descending (default: desc)')
         parser.add_argument('--columns',
                             help='Comma-separated list of columns to include (default: all columns)')
         parser.add_argument('--min-duration', type=int, help='Minimum task duration in minutes to include')
@@ -1016,15 +1019,19 @@ class ReportCommand:
             raise ValueError(
                 f"Invalid sort option: '{sort_by}'. Valid options are: {', '.join(self.VALID_SORT_OPTIONS)}")
 
+        # Get sort order and validate
+        sort_order = self._get_sort_order(args)
+        reverse = (sort_order == 'desc')
+
         if sort_by == 'date':
-            return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
+            return sorted(logs, key=lambda log: self._date_to_datetime(log['date']), reverse=reverse)
         elif sort_by == 'category':
             # Sort by category, placing None/empty categories at the end
             return sorted(logs, key=lambda log: ('category' not in log or log['category'] is None,
-                                                 log.get('category', '') or ''))
+                                                 log.get('category', '') or ''), reverse=reverse)
         elif sort_by == 'duration':
             # Sort by duration in descending order (higher duration first)
-            return sorted(logs, key=lambda log: float(log['duration']), reverse=True)
+            return sorted(logs, key=lambda log: float(log['duration']), reverse=reverse)
 
         # Default fallback to date sorting (shouldn't reach here due to validation)
         return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
@@ -1045,6 +1052,16 @@ class ReportCommand:
                 f"Unknown column(s): {', '.join(unknown_columns)}. Valid columns are: {', '.join(self.VALID_COLUMNS)}")
 
         return requested_columns
+
+    def _get_sort_order(self, args):
+        """Get and validate the sort order."""
+        sort_order = getattr(args, 'sort_order', 'desc')
+
+        if sort_order not in self.VALID_SORT_ORDERS:
+            raise ValueError(
+                f"Invalid sort order: '{sort_order}'. Valid options are: {', '.join(self.VALID_SORT_ORDERS)}")
+
+        return sort_order
 
     def _validate_date(self, date_str):
         """Validate and parse date string in YYYY-MM-DD format."""
