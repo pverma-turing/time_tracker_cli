@@ -846,6 +846,7 @@ class ReportCommand:
     """Command to export time entries to a CSV file."""
     VALID_SORT_OPTIONS = ['date', 'category', 'duration']
     VALID_COLUMNS = ['date', 'task', 'duration', 'category', 'description']
+
     def get_short_description(self) -> str:
         """
         Return a short description for the summary command.
@@ -872,9 +873,9 @@ class ReportCommand:
         parser.add_argument('--sort-by', choices=['date', 'category', 'duration'],
                                    default='date', help='Sort logs by field (default: date)')
         parser.add_argument('--columns',
-                                   help='Comma-separated list of columns to include (default: all columns)')
+                            help='Comma-separated list of columns to include (default: all columns)')
         parser.add_argument('--min-duration', type=int, help='Minimum task duration in minutes to include')
-
+        parser.add_argument('--limit', type=int, help='Limit to top N entries based on current sort order')
 
     def execute(self, args):
         """Execute the report command with the given arguments."""
@@ -892,6 +893,9 @@ class ReportCommand:
             # Apply sorting
             sorted_logs = self._sort_logs(filtered_logs, args)
 
+            # Apply limit if specified
+            limited_logs = self._apply_limit(sorted_logs, args)
+
             # Parse and validate requested columns
             columns = self._parse_columns(args)
 
@@ -899,7 +903,7 @@ class ReportCommand:
             output_file = args.output if args.output else "logs_report.csv"
 
             # Export to CSV
-            self._export_to_csv(filtered_logs, output_file, columns)
+            self._export_to_csv(limited_logs, output_file, columns)
 
             # Prepare feedback message
             message = f"Report saved to {output_file}."
@@ -907,6 +911,10 @@ class ReportCommand:
                 message += " (No entries matched the filters)"
             elif len(filtered_logs) < len(logs):
                 message += f" ({len(filtered_logs)} of {len(logs)} entries exported after filtering)"
+
+            # Add limit information if applicable
+            if hasattr(args, 'limit') and args.limit is not None and len(limited_logs) < len(filtered_logs):
+                message += f" (Limited to top {len(limited_logs)} entries)"
 
             print(message)
 
@@ -968,6 +976,27 @@ class ReportCommand:
             print(f"Applied filters: {', '.join(filters_applied)}")
 
         return filtered_logs
+
+    def _apply_limit(self, logs, args):
+        """Apply limit to the sorted logs if specified."""
+        if not hasattr(args, 'limit') or args.limit is None:
+            return logs
+
+        try:
+            limit = self._validate_limit(args.limit)
+            return logs[:limit]
+        except ValueError as e:
+            raise ValueError(f"Invalid limit: {str(e)}")
+
+    def _validate_limit(self, limit):
+        """Validate limit value."""
+        if not isinstance(limit, int):
+            raise ValueError("Limit must be an integer")
+
+        if limit <= 0:
+            raise ValueError("Limit must be a positive integer")
+
+        return limit
 
     def _validate_min_duration(self, min_duration):
         """Validate minimum duration value."""
