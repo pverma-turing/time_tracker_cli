@@ -847,6 +847,7 @@ class ReportCommand:
     VALID_SORT_OPTIONS = ['date', 'category', 'duration']
     VALID_SORT_ORDERS = ['asc', 'desc']
     VALID_COLUMNS = ['date', 'task', 'duration', 'category', 'description']
+    DEFAULT_DELIMITER = ','
 
     def get_short_description(self) -> str:
         """
@@ -881,6 +882,8 @@ class ReportCommand:
         parser.add_argument('--limit', type=int, help='Limit to top N entries based on current sort order')
         parser.add_argument('--no-header', action='store_true',
                                    help='Omit header row in CSV output (useful for appending to existing files)')
+        parser.add_argument('--delimiter',
+                                   help='Specify custom delimiter character for CSV output (default: ,)')
 
     def execute(self, args):
         """Execute the report command with the given arguments."""
@@ -907,16 +910,21 @@ class ReportCommand:
             # Determine output filename
             output_file = args.output if args.output else "logs_report.csv"
 
+            # Validate and get delimiter
+            delimiter = self._parse_delimiter(args)
+
             # Check if header should be included
             include_header = not (hasattr(args, 'no_header') and args.no_header)
 
             # Export to CSV
-            self._export_to_csv(limited_logs, output_file, columns, include_header)
+            self._export_to_csv(limited_logs, output_file, columns, include_header, delimiter)
 
             # Prepare feedback message
             message = f"Report saved to {output_file}."
             if not include_header:
                 message += " (Header row omitted)"
+            if delimiter != self.DEFAULT_DELIMITER:
+                message += f" (Using '{delimiter}' as delimiter)"
             if len(filtered_logs) == 0:
                 message += " (No entries matched the filters)"
             elif len(filtered_logs) < len(logs):
@@ -930,6 +938,18 @@ class ReportCommand:
 
         except ValueError as e:
             print(f"Error: {str(e)}")
+
+    def _parse_delimiter(self, args):
+        """Parse and validate the delimiter argument."""
+        # Use default delimiter if not specified
+        if not hasattr(args, 'delimiter') or not args.delimiter:
+            return self.DEFAULT_DELIMITER
+
+        # Validate the delimiter
+        if len(args.delimiter) != 1:
+            raise ValueError("Delimiter must be a single character")
+
+        return args.delimiter
 
     def _get_logs(self):
         """Retrieve all time entries from storage."""
@@ -1086,11 +1106,11 @@ class ReportCommand:
             # This is a fallback and should be aligned with the actual date format used in the app
             return datetime.datetime.strptime("1970-01-01", "%Y-%m-%d")  # Use a default date in the past
 
-    def _export_to_csv(self, logs, output_file, columns, include_header):
+    def _export_to_csv(self, logs, output_file, columns, include_header=True, delimiter=','):
         """Export time entries to a CSV file with the specified columns."""
         try:
             with open(output_file, 'w', newline='') as csvfile:
-                writer = csv.writer(csvfile)
+                writer = csv.writer(csvfile, delimiter=delimiter)
 
                 # Write header row with selected columns if header is requested
                 if include_header:
