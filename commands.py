@@ -491,7 +491,7 @@ class LogCommand(Command):
             if not value:
                 return value
             try:
-                date = datetime.datetime.date.fromisoformat(value.strip())
+                date = datetime.date.fromisoformat(value.strip())
                 return date.isoformat()
             except ValueError:
                 raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
@@ -905,36 +905,56 @@ class ReportCommand:
             limited_logs = self._apply_limit(sorted_logs, args)
 
             # Parse and validate requested columns
-            columns = self._parse_columns(args)
+            try:
+                columns = self._parse_columns(args)
+            except ValueError as e:
+                print(f"Error with column selection: {str(e)}")
+                print("Please specify valid column names.")
+                return
+
+            # Get delimiter
+            try:
+                delimiter = self._parse_delimiter(args)
+            except ValueError as e:
+                print(f"Error with delimiter: {str(e)}")
+                print("Please specify a single character as delimiter.")
+                return
 
             # Determine output filename
             output_file = args.output if args.output else "logs_report.csv"
-
-            # Validate and get delimiter
-            delimiter = self._parse_delimiter(args)
 
             # Check if header should be included
             include_header = not (hasattr(args, 'no_header') and args.no_header)
 
             # Export to CSV
-            self._export_to_csv(limited_logs, output_file, columns, include_header, delimiter)
+            try:
+                self._export_to_csv(limited_logs, output_file, columns, include_header, delimiter)
 
-            # Prepare feedback message
-            message = f"Report saved to {output_file}."
-            if not include_header:
-                message += " (Header row omitted)"
-            if delimiter != self.DEFAULT_DELIMITER:
-                message += f" (Using '{delimiter}' as delimiter)"
-            if len(filtered_logs) == 0:
-                message += " (No entries matched the filters)"
-            elif len(filtered_logs) < len(logs):
-                message += f" ({len(filtered_logs)} of {len(logs)} entries exported after filtering)"
+                # Prepare feedback message
+                message = f"Report saved to {output_file}."
+                if not include_header:
+                    message += " (Header row omitted)"
 
-            # Add limit information if applicable
-            if hasattr(args, 'limit') and args.limit is not None and len(limited_logs) < len(filtered_logs):
-                message += f" (Limited to top {len(limited_logs)} entries)"
+                if delimiter != self.DEFAULT_DELIMITER:
+                    message += f" (Using '{delimiter}' as delimiter)"
 
-            print(message)
+                if len(filtered_logs) < len(logs):
+                    message += f" ({len(filtered_logs)} of {len(logs)} entries matched filters)"
+
+                # Add limit information if applicable
+                if hasattr(args, 'limit') and args.limit is not None and len(limited_logs) < len(filtered_logs):
+                    message += f" (Limited to top {len(limited_logs)} entries)"
+
+                print(message)
+
+            except IOError as e:
+                print(f"Failed to write to output file: {str(e)}")
+
+                # Provide additional guidance based on common issues
+                if "Permission denied" in str(e):
+                    print("Check that you have write permission to the directory and the file is not in use.")
+                elif "No such file or directory" in str(e):
+                    print("The directory for the output file does not exist. Please create it first.")
 
         except ValueError as e:
             print(f"Error: {str(e)}")
@@ -954,9 +974,27 @@ class ReportCommand:
     def _get_logs(self):
         """Retrieve all time entries from storage."""
         # This implementation should use the same storage mechanism as other commands
-        # For example, using the existing storage module:
-        from storage import load_logs
-        return load_logs()
+        try:
+            from storage import load_logs
+            logs = load_logs()
+
+            if not logs:
+                # This distinguishes between "no file" and "empty file"
+                # Implementation might need to be adjusted based on how load_logs behaves
+                # For example, if load_logs returns None for missing files and [] for empty files
+                if logs is None:
+                    print("Log file not found.")
+                else:
+                    print("Log file exists but contains no entries.")
+
+            return logs
+
+        except (ImportError, ModuleNotFoundError):
+            print("Error loading storage module. Check your installation.")
+            return []
+        except Exception as e:
+            print(f"Error loading logs: {str(e)}")
+            return []
 
     def _apply_filters(self, logs, args):
         """Apply filters based on command arguments."""
