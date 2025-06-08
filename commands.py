@@ -1206,12 +1206,20 @@ class DeleteCommand(Command):
                                    help='Delete entries from this date onward (YYYY-MM-DD format, inclusive)')
         parser.add_argument('--end-date', help='Delete entries up to this date (YYYY-MM-DD format, inclusive)')
         parser.add_argument('--reason', help='Record the reason for deletion (for documentation purposes)')
+        parser.add_argument('--all', action='store_true',
+                                   help='Delete all entries (cannot be combined with other filters)')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
-        # Check if at least one filter is provided
-        if not (args.id or args.category or args.date):
-            print("Error: At least one filter (--id, --category, or --date) must be provided.")
+        # Check if --all is combined with other filters
+        if args.all and (args.id or args.category or args.date or args.start_date or args.end_date):
+            print("Error: --all cannot be combined with other filters.")
+            return
+
+        # Check if at least one filter or --all is provided
+        if not (args.all or args.id or args.category or args.date or args.start_date or args.end_date):
+            print(
+                "Error: At least one filter (--id, --category, --date, --start-date, --end-date) must be provided, or use --all to delete everything.")
             return
 
         # Get all time entries
@@ -1220,47 +1228,52 @@ class DeleteCommand(Command):
         if not logs:
             print("No entries found.")
             return
-
-        # Make a copy of the logs to preserve the original list
-        original_logs = logs.copy()
-
         entries_to_delete = []
-        # Check date range filters
-        for log in original_logs:
-            should_delete = True
-            # Check ID filter
-            if args.id and str(log['id']) != args.id:
-                should_delete = False
 
-            # Check category filter
-            if args.category and log['category'] != args.category:
-                should_delete = False
+        if args.all:
+            entries_to_delete = logs.copy()
+        else:
+            # Make a copy of the logs
+            # Make a copy of the logs to preserve the original list
+            original_logs = logs.copy()
 
-            # Check exact date filter
-            if args.date and str(log['date']) != args.date:
-                should_delete = False
 
             # Check date range filters
-            if args.start_date or args.end_date:
-                log_date = self._parse_date(str(log['date']))
+            for log in original_logs:
+                should_delete = True
+                # Check ID filter
+                if args.id and str(log['id']) != args.id:
+                    should_delete = False
 
-            if args.start_date or args.end_date:
-                log_date = self._parse_date(str(log['date']))
+                # Check category filter
+                if args.category and log['category'] != args.category:
+                    should_delete = False
 
-                if args.start_date:
-                    start_date = self._parse_date(args.start_date)
-                    if log_date < start_date:
-                        should_delete = False
+                # Check exact date filter
+                if args.date and str(log['date']) != args.date:
+                    should_delete = False
 
-                if args.end_date:
-                    end_date = self._parse_date(args.end_date)
-                    if log_date > end_date:
-                        should_delete = False
-            if should_delete:
-                entries_to_delete.append(log)
+                # Check date range filters
+                if args.start_date or args.end_date:
+                    log_date = self._parse_date(str(log['date']))
+
+                if args.start_date or args.end_date:
+                    log_date = self._parse_date(str(log['date']))
+
+                    if args.start_date:
+                        start_date = self._parse_date(args.start_date)
+                        if log_date < start_date:
+                            should_delete = False
+
+                    if args.end_date:
+                        end_date = self._parse_date(args.end_date)
+                        if log_date > end_date:
+                            should_delete = False
+                if should_delete:
+                    entries_to_delete.append(log)
 
         # Calculate how many entries were deleted
-        deleted_count = len(original_logs) - len(entries_to_delete)
+        deleted_count = len(entries_to_delete)
 
         if deleted_count == 0:
             print("No matching entries found to delete.")
@@ -1275,15 +1288,25 @@ class DeleteCommand(Command):
         filter_description = self._create_filter_description(args)
 
         if args.dry_run:
-            print(
-                f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} would be deleted.")
+            if args.all:
+                print(f"All {deleted_count} entries would be deleted.")
+            else:
+                filter_description = self._create_filter_description(args)
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} would be deleted.")
+
             if args.reason:
                 print(f"Reason: {args.reason}")
             print("No data was modified (dry run mode).")
         else:
             # Display confirmation message
-            print(
-                f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} will be deleted.")
+            if args.all:
+                print(f"You are about to delete all entries.")
+            else:
+                filter_description = self._create_filter_description(args)
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} will be deleted.")
+
             if args.reason:
                 print(f"Reason: {args.reason}")
 
@@ -1292,16 +1315,33 @@ class DeleteCommand(Command):
                 f"You are about to delete {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Do you want to proceed? (y/n): ")
 
             if confirmation.lower() == 'y':
-                # Perform actual deletion by saving the remaining logs
-                self._save_logs(entries_to_delete)
-
-                if args.reason:
-                    print(
-                        f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Reason: {args.reason}")
+                if args.all:
+                    # For --all, we're deleting everything, so save an empty list
+                    self._save_logs([])
                 else:
-                    print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+                    # Identify entries to keep (entries that don't match filter criteria)
+                    remaining_logs = [log for log in logs if log not in entries_to_delete]
+
+                    # Perform actual deletion by saving the remaining logs
+                    self._save_logs(remaining_logs)
+
+                # Display confirmation with reason if provided
+                if args.all:
+                    if args.reason:
+                        print(f"All entries deleted successfully. Reason: {args.reason}")
+                    else:
+                        print("All entries deleted successfully.")
+                else:
+                    if args.reason:
+                        print(
+                            f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Reason: {args.reason}")
+                    else:
+                        print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
             else:
-                print("Deletion cancelled by user.")
+                if args.all:
+                    print("Deletion of all entries canceled by user.")
+                else:
+                    print("Deletion cancelled by user.")
 
     def _preview_entries(self, entries_to_delete):
         """Display a preview of entries that would be deleted in a tabular format."""
