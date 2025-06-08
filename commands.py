@@ -1171,3 +1171,92 @@ class ReportCommand:
                     writer.writerow(row)
         except IOError as e:
             raise IOError(f"Failed to write CSV file: {str(e)}")
+
+
+class DeleteCommand(Command):
+    """Command to delete time entries based on specified criteria."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Delete logs"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """
+        Add report command-specific arguments to parser.
+
+        Configure the parser with all arguments needed for generating summary reports,
+        including date range and grouping options.
+
+        Args:
+            parser: The argument parser to add arguments to.
+        """
+        parser.add_argument('--id', help='ID of the specific log entry to delete')
+        parser.add_argument('--category', help='Delete all entries within a given category')
+        parser.add_argument('--date', help='Delete all entries from a specific date (YYYY-MM-DD format)')
+
+    def execute(self, args):
+        """Execute the delete command with the given arguments."""
+        # Check if at least one filter is provided
+        if not (args.id or args.category or args.date):
+            print("Error: At least one filter (--id, --category, or --date) must be provided.")
+            return
+
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            print("No entries found.")
+            return
+
+        # Make a copy of the logs to preserve the original list
+        original_logs = logs.copy()
+
+        # Apply filters to identify entries to delete
+        if args.id:
+            logs = [log for log in logs if str(log['id']) != args.id]
+
+        if args.category:
+            logs = [log for log in logs if log['category'] != args.category]
+
+        if args.date:
+            logs = [log for log in logs if str(log['date']) != args.date]
+
+        # Calculate how many entries were deleted
+        deleted_count = len(original_logs) - len(logs)
+
+        if deleted_count == 0:
+            print("No matching entries found to delete.")
+            return
+
+        # Save the updated logs
+        self._save_logs(logs)
+
+        # Display confirmation
+        print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _save_logs(self, logs):
+        """Save the remaining logs back to storage."""
+        # This should use the same data storage mechanism as other commands
+        # For example, if using JSON file storage:
+        try:
+            from storage import save_logs
+            save_logs(logs)
+        except Exception as e:
+            print(f"Error saving logs: {e}")
