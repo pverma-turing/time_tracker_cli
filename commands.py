@@ -1235,7 +1235,6 @@ class DeleteCommand(Command):
             print("No matching entries found to delete.")
             return
 
-        # Handle dry run vs. actual deletion
         if args.dry_run:
             # Create appropriate message based on which filters were used
             if args.id:
@@ -1254,13 +1253,33 @@ class DeleteCommand(Command):
 
             print("No data was modified (dry run mode).")
         else:
-            # Perform actual deletion by saving the remaining logs
-            self._save_logs(logs)
+            # Display confirmation message based on which filters were used
+            if args.id:
+                print(f"Entry with ID {args.id} will be deleted.")
+            elif args.category and args.date:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' on {args.date} will be deleted.")
+            elif args.category:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' will be deleted.")
+            elif args.date:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} dated {args.date} will be deleted.")
+            else:
+                print(f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} will be deleted.")
 
-            # Display confirmation
-            print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
-        # Display confirmation
-        print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+            # Prompt for confirmation
+            confirmation = input(
+                f"You are about to delete {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Do you want to proceed? (y/n): ")
+
+            if confirmation.lower() == 'y':
+                # Perform actual deletion by saving the remaining logs
+                self._save_logs(logs)
+
+                # Display confirmation
+                print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+            else:
+                print("Deletion cancelled by user.")
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
