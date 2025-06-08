@@ -1208,6 +1208,8 @@ class DeleteCommand(Command):
         parser.add_argument('--reason', help='Record the reason for deletion (for documentation purposes)')
         parser.add_argument('--all', action='store_true',
                                    help='Delete all entries (cannot be combined with other filters)')
+        parser.add_argument('--keyword',
+                                   help='Delete entries containing this keyword in the task (case-insensitive)')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
@@ -1216,10 +1218,16 @@ class DeleteCommand(Command):
             print("Error: --all cannot be combined with other filters.")
             return
 
-        # Check if at least one filter or --all is provided
-        if not (args.all or args.id or args.category or args.date or args.start_date or args.end_date):
+        # Check for invalid combinations of --keyword with --id or --all
+        if args.keyword and (args.id or args.all):
+            print("Error: --keyword cannot be combined with --id or --all.")
+            return
+
+        # Check if at least one filter is provided or --all
+        if not (
+                args.id or args.category or args.date or args.start_date or args.end_date or args.keyword or args.all):
             print(
-                "Error: At least one filter (--id, --category, --date, --start-date, --end-date) must be provided, or use --all to delete everything.")
+                "Error: At least one filter (--id, --category, --date, --start-date, --end-date, --keyword) must be provided, or use --all to delete all entries.")
             return
 
         # Get all time entries
@@ -1269,6 +1277,10 @@ class DeleteCommand(Command):
                         end_date = self._parse_date(args.end_date)
                         if log_date > end_date:
                             should_delete = False
+                # Check keyword filter (case-insensitive match in task field)
+                if args.keyword and args.keyword.lower() not in log['task'].lower():
+                    should_delete = False
+
                 if should_delete:
                     entries_to_delete.append(log)
 
@@ -1331,6 +1343,13 @@ class DeleteCommand(Command):
                         print(f"All entries deleted successfully. Reason: {args.reason}")
                     else:
                         print("All entries deleted successfully.")
+                elif args.keyword:
+                    if args.reason:
+                        print(
+                            f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'} containing keyword '{args.keyword}'. Reason: {args.reason}")
+                    else:
+                        print(
+                            f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'} containing keyword '{args.keyword}'.")
                 else:
                     if args.reason:
                         print(
@@ -1405,6 +1424,9 @@ class DeleteCommand(Command):
             descriptions.append(f"from {args.start_date} onward")
         elif args.end_date:
             descriptions.append(f"up to {args.end_date}")
+
+        if args.keyword:
+            descriptions.append(f"containing keyword '{args.keyword}'")
 
         if not descriptions:
             return ""
