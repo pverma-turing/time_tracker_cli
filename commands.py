@@ -1205,6 +1205,7 @@ class DeleteCommand(Command):
         parser.add_argument('--start-date',
                                    help='Delete entries from this date onward (YYYY-MM-DD format, inclusive)')
         parser.add_argument('--end-date', help='Delete entries up to this date (YYYY-MM-DD format, inclusive)')
+        parser.add_argument('--reason', help='Record the reason for deletion (for documentation purposes)')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
@@ -1274,37 +1275,17 @@ class DeleteCommand(Command):
         filter_description = self._create_filter_description(args)
 
         if args.dry_run:
-            # Create appropriate message based on which filters were used
-            if args.id:
-                print(f"Entry with ID {args.id} would be deleted.")
-            elif args.category and args.date:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' on {args.date} would be deleted.")
-            elif args.category:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' would be deleted.")
-            elif args.date:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} dated {args.date} would be deleted.")
-            else:
-                print(f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} would be deleted.")
-
+            print(
+                f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} would be deleted.")
+            if args.reason:
+                print(f"Reason: {args.reason}")
             print("No data was modified (dry run mode).")
         else:
-            # Display confirmation message based on which filters were used
-            if args.id:
-                print(f"Entry with ID {args.id} will be deleted.")
-            elif args.category and args.date:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' on {args.date} will be deleted.")
-            elif args.category:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' will be deleted.")
-            elif args.date:
-                print(
-                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} dated {args.date} will be deleted.")
-            else:
-                print(f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} will be deleted.")
+            # Display confirmation message
+            print(
+                f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} will be deleted.")
+            if args.reason:
+                print(f"Reason: {args.reason}")
 
             # Prompt for confirmation
             confirmation = input(
@@ -1314,8 +1295,11 @@ class DeleteCommand(Command):
                 # Perform actual deletion by saving the remaining logs
                 self._save_logs(entries_to_delete)
 
-                # Display confirmation
-                print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+                if args.reason:
+                    print(
+                        f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Reason: {args.reason}")
+                else:
+                    print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
             else:
                 print("Deletion cancelled by user.")
 
