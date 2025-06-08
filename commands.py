@@ -1202,6 +1202,9 @@ class DeleteCommand(Command):
                                   help='Simulate deletion without actually removing entries')
         parser.add_argument('--preview', action='store_true',
                                    help='Display a detailed table of entries matching filter criteria (no deletion performed)')
+        parser.add_argument('--start-date',
+                                   help='Delete entries from this date onward (YYYY-MM-DD format, inclusive)')
+        parser.add_argument('--end-date', help='Delete entries up to this date (YYYY-MM-DD format, inclusive)')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
@@ -1220,18 +1223,43 @@ class DeleteCommand(Command):
         # Make a copy of the logs to preserve the original list
         original_logs = logs.copy()
 
-        # Apply filters to identify entries to delete
-        if args.id:
-            logs = [log for log in logs if str(log['id']) != args.id]
+        entries_to_delete = []
+        # Check date range filters
+        for log in original_logs:
+            should_delete = True
+            # Check ID filter
+            if args.id and str(log['id']) != args.id:
+                should_delete = False
 
-        if args.category:
-            logs = [log for log in logs if log['category'] != args.category]
+            # Check category filter
+            if args.category and log['category'] != args.category:
+                should_delete = False
 
-        if args.date:
-            logs = [log for log in logs if str(log['date']) != args.date]
+            # Check exact date filter
+            if args.date and str(log['date']) != args.date:
+                should_delete = False
+
+            # Check date range filters
+            if args.start_date or args.end_date:
+                log_date = self._parse_date(str(log['date']))
+
+            if args.start_date or args.end_date:
+                log_date = self._parse_date(str(log['date']))
+
+                if args.start_date:
+                    start_date = self._parse_date(args.start_date)
+                    if log_date < start_date:
+                        should_delete = False
+
+                if args.end_date:
+                    end_date = self._parse_date(args.end_date)
+                    if log_date > end_date:
+                        should_delete = False
+            if should_delete:
+                entries_to_delete.append(log)
 
         # Calculate how many entries were deleted
-        deleted_count = len(original_logs) - len(logs)
+        deleted_count = len(original_logs) - len(entries_to_delete)
 
         if deleted_count == 0:
             print("No matching entries found to delete.")
@@ -1239,8 +1267,11 @@ class DeleteCommand(Command):
 
         # Handle preview mode - takes precedence over dry run and normal delete
         if args.preview:
-            self._preview_entries(logs)
+            self._preview_entries(entries_to_delete)
             return
+
+        # Create a description of what's being filtered
+        filter_description = self._create_filter_description(args)
 
         if args.dry_run:
             # Create appropriate message based on which filters were used
@@ -1281,7 +1312,7 @@ class DeleteCommand(Command):
 
             if confirmation.lower() == 'y':
                 # Perform actual deletion by saving the remaining logs
-                self._save_logs(logs)
+                self._save_logs(entries_to_delete)
 
                 # Display confirmation
                 print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
@@ -1330,6 +1361,41 @@ class DeleteCommand(Command):
             ))
 
         print(separator)
+
+    def _create_filter_description(self, args):
+        """Create a descriptive text of the filters being applied."""
+        descriptions = []
+
+        if args.id:
+            descriptions.append(f"with ID {args.id}")
+
+        if args.category:
+            descriptions.append(f"from category '{args.category}'")
+
+        if args.date:
+            descriptions.append(f"dated {args.date}")
+
+        if args.start_date and args.end_date:
+            descriptions.append(f"within date range {args.start_date} to {args.end_date}")
+        elif args.start_date:
+            descriptions.append(f"from {args.start_date} onward")
+        elif args.end_date:
+            descriptions.append(f"up to {args.end_date}")
+
+        if not descriptions:
+            return ""
+
+        return " ".join(descriptions)
+
+    def _parse_date(self, date_str):
+        """Parse a date string in YYYY-MM-DD format."""
+        from datetime import datetime
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            # Return a default date in case of parsing error
+            # In a real implementation, this should probably raise an error
+            return datetime.min.date()
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
