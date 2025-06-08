@@ -1198,6 +1198,8 @@ class DeleteCommand(Command):
         parser.add_argument('--id', help='ID of the specific log entry to delete')
         parser.add_argument('--category', help='Delete all entries within a given category')
         parser.add_argument('--date', help='Delete all entries from a specific date (YYYY-MM-DD format)')
+        parser.add_argument('--dry-run', action='store_true',
+                                  help='Simulate deletion without actually removing entries')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
@@ -1233,9 +1235,30 @@ class DeleteCommand(Command):
             print("No matching entries found to delete.")
             return
 
-        # Save the updated logs
-        self._save_logs(logs)
+        # Handle dry run vs. actual deletion
+        if args.dry_run:
+            # Create appropriate message based on which filters were used
+            if args.id:
+                print(f"Entry with ID {args.id} would be deleted.")
+            elif args.category and args.date:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' on {args.date} would be deleted.")
+            elif args.category:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} from category '{args.category}' would be deleted.")
+            elif args.date:
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} dated {args.date} would be deleted.")
+            else:
+                print(f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} would be deleted.")
 
+            print("No data was modified (dry run mode).")
+        else:
+            # Perform actual deletion by saving the remaining logs
+            self._save_logs(logs)
+
+            # Display confirmation
+            print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
         # Display confirmation
         print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
 
