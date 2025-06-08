@@ -1200,6 +1200,8 @@ class DeleteCommand(Command):
         parser.add_argument('--date', help='Delete all entries from a specific date (YYYY-MM-DD format)')
         parser.add_argument('--dry-run', action='store_true',
                                   help='Simulate deletion without actually removing entries')
+        parser.add_argument('--preview', action='store_true',
+                                   help='Display a detailed table of entries matching filter criteria (no deletion performed)')
 
     def execute(self, args):
         """Execute the delete command with the given arguments."""
@@ -1233,6 +1235,11 @@ class DeleteCommand(Command):
 
         if deleted_count == 0:
             print("No matching entries found to delete.")
+            return
+
+        # Handle preview mode - takes precedence over dry run and normal delete
+        if args.preview:
+            self._preview_entries(logs)
             return
 
         if args.dry_run:
@@ -1280,6 +1287,49 @@ class DeleteCommand(Command):
                 print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
             else:
                 print("Deletion cancelled by user.")
+
+    def _preview_entries(self, entries_to_delete):
+        """Display a preview of entries that would be deleted in a tabular format."""
+        if not entries_to_delete:
+            print("No matching entries found for preview.")
+            return
+
+        print(f"Previewing {len(entries_to_delete)} entries that match your criteria. No changes will be made.")
+
+        # Create header and formatting for table
+        header = ["ID", "Date", "Task", "Duration", "Category"]
+
+        # Determine max width for each column based on content
+        id_width = max(len("ID"), max(len(str(idx)) for idx, entry in enumerate(entries_to_delete)) if entries_to_delete else 0)
+        date_width = max(len("Date"),
+                         max(len(str(entry['date'])) for entry in entries_to_delete) if entries_to_delete else 0)
+        task_width = max(len("Task"), max(len(entry['task']) for entry in entries_to_delete) if entries_to_delete else 0)
+        duration_width = max(len("Duration"),
+                             max(len(str(entry['duration'])) for entry in entries_to_delete) if entries_to_delete else 0)
+        category_width = max(len("Category"), max(
+            len(entry['category']) if entry['category'] else 0 for entry in entries_to_delete) if entries_to_delete else 0)
+
+        # Create format string for table rows
+        format_str = f"| {{:{id_width}}} | {{:{date_width}}} | {{:{task_width}}} | {{:{duration_width}}} | {{:{category_width}}} |"
+
+        # Print header
+        header_str = format_str.format(*header)
+        separator = "-" * len(header_str)
+        print(separator)
+        print(header_str)
+        print(separator)
+
+        # Print each entry
+        for idx, entry in enumerate(entries_to_delete):
+            print(format_str.format(
+                str(idx),
+                str(entry['date']),
+                entry['task'],
+                str(entry['duration']),
+                entry.get('category', '')
+            ))
+
+        print(separator)
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
