@@ -1288,7 +1288,12 @@ class DeleteCommand(Command):
         deleted_count = len(entries_to_delete)
 
         if deleted_count == 0:
-            print("No matching entries found to delete.")
+            if args.keyword:
+                print(f"No matching entries found for keyword '{args.keyword}'. Nothing was deleted.")
+            elif args.start_date or args.end_date:
+                print("No matching entries found for the specified date range. Nothing was deleted.")
+            else:
+                print("No matching entries found. Nothing was deleted.")
             return
 
         # Handle preview mode - takes precedence over dry run and normal delete
@@ -1327,40 +1332,39 @@ class DeleteCommand(Command):
                 f"You are about to delete {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Do you want to proceed? (y/n): ")
 
             if confirmation.lower() == 'y':
-                if args.all:
-                    # For --all, we're deleting everything, so save an empty list
-                    self._save_logs([])
-                else:
-                    # Identify entries to keep (entries that don't match filter criteria)
-                    remaining_logs = [log for log in logs if log not in entries_to_delete]
+                # Identify entries to keep (entries that don't match filter criteria)
+                remaining_logs = [log for log in logs if log not in entries_to_delete]
 
-                    # Perform actual deletion by saving the remaining logs
-                    self._save_logs(remaining_logs)
+                # Perform actual deletion by saving the remaining logs
+                self._save_logs(remaining_logs)
 
-                # Display confirmation with reason if provided
-                if args.all:
-                    if args.reason:
-                        print(f"All entries deleted successfully. Reason: {args.reason}")
-                    else:
-                        print("All entries deleted successfully.")
-                elif args.keyword:
-                    if args.reason:
-                        print(
-                            f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'} containing keyword '{args.keyword}'. Reason: {args.reason}")
-                    else:
-                        print(
-                            f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'} containing keyword '{args.keyword}'.")
-                else:
-                    if args.reason:
-                        print(
-                            f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Reason: {args.reason}")
-                    else:
-                        print(f"Successfully removed {deleted_count} {'entry' if deleted_count == 1 else 'entries'}.")
+                # Generate the summary message based on what was deleted
+                summary_message = self._create_summary_message(args, deleted_count, filter_description)
+                print(summary_message)
             else:
                 if args.all:
                     print("Deletion of all entries canceled by user.")
                 else:
                     print("Deletion cancelled by user.")
+
+    def _create_summary_message(self, args, deleted_count, filter_description):
+        """Create a detailed summary message for the deletion operation."""
+        # Base message with count and appropriate pluralization
+        message = f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'}"
+
+        # Add filter information if applicable
+        if args.all:
+            message = "All entries deleted successfully"
+        elif filter_description:
+            message += f" {filter_description}"
+
+        # Add reason if provided
+        if args.reason:
+            message += f". Reason: {args.reason}"
+        else:
+            message += "."
+
+        return message
 
     def _preview_entries(self, entries_to_delete):
         """Display a preview of entries that would be deleted in a tabular format."""
