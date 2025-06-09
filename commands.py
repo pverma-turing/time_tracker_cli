@@ -2209,3 +2209,115 @@ class EditCommand(Command):
             save_logs(logs)
         except Exception as e:
             print(f"Error saving logs: {e}")
+
+
+class TagCommand(Command):
+    """Command to add tags to a specific log entry."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Tag logs"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """Add command-specific arguments to parser."""
+        parser.add_argument('--id', required=True, type=int, help='ID of the entry to tag')
+        parser.add_argument('--add', help='Comma-separated list of tags to add (e.g., work,urgent)')
+
+    def execute(self, args):
+        """Execute the tag command with the given arguments."""
+        # Check if tags were provided
+        if not args.add:
+            print("Please provide tags using the --add flag.")
+            return
+
+        # Get the log entry by ID
+        entry = self._get_log_by_id(args.id)
+
+        if not entry:
+            print(f"No entry found with ID {args.id}")
+            return
+
+        # Parse the comma-separated tags
+        new_tags = [tag.strip() for tag in args.add.split(',')]
+
+        # Add tags to the entry (without duplicates)
+        updated_tags = self._add_tags_to_entry(entry, new_tags)
+
+        # Save the updated entry
+        self._save_entry(entry)
+
+        # Show confirmation message
+        print(f"Added tags {updated_tags} to entry {args.id}")
+
+    def _get_log_by_id(self, entry_id):
+        """Retrieve a log entry by its ID."""
+        # This would be replaced with actual retrieval logic
+        # For example, by using a data storage service or manager
+        # This is just a placeholder
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return None
+        for log in logs:
+            if log["id"] == int(entry_id):
+                return log
+        return None
+
+    def _add_tags_to_entry(self, entry, new_tags):
+        """Add tags to an entry without duplicating existing ones."""
+        # Initialize tags list if it doesn't exist
+        if 'tags' not in entry:
+            entry['tags'] = []
+
+        # Add only new tags (avoiding duplicates)
+        added_tags = []
+        for tag in new_tags:
+            if tag not in entry['tags']:
+                entry['tags'].append(tag)
+                added_tags.append(tag)
+
+        return added_tags
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _save_logs(self, logs):
+        """Save the remaining logs back to storage."""
+        # This should use the same data storage mechanism as other commands
+        # For example, if using JSON file storage:
+        try:
+            from storage import save_logs
+            save_logs(logs)
+        except Exception as e:
+            print(f"Error saving logs: {e}")
+
+    def _save_entry(self, entry):
+        """Save the updated entry back to storage."""
+        # This would be replaced with actual save logic
+        # For example, by using a data storage service or manager
+        # This is just a placeholder
+        logs = load_logs()
+        if not logs:
+            self._save_logs([entry])
+        else:
+            updated_logs = []
+            for log in logs:
+                if log['id'] == entry['id']:
+                    updated_logs.append(entry)
+                else:
+                    updated_logs.append(log)
+            self._save_logs(updated_logs)
