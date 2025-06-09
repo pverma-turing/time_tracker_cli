@@ -395,6 +395,7 @@ def format_summary_as_json(summary, category=None):
 
     return result
 
+
 class Command(ABC):
     """
     Base command interface following the Command design pattern.
@@ -490,7 +491,7 @@ class LogCommand(Command):
             if not value:
                 return value
             try:
-                date = datetime.datetime.date.fromisoformat(value.strip())
+                date = datetime.date.fromisoformat(value.strip())
                 return date.isoformat()
             except ValueError:
                 raise argparse.ArgumentTypeError("Invalid date format. Use YYYY-MM-DD.")
@@ -759,7 +760,6 @@ class SummaryCommand(Command):
         if start_date and end_date and end_date < start_date:
             date_filter_error = "End date cannot be earlier than start date."
 
-
         # Validate and store the top parameter
         top = None
         if hasattr(args, 'top'):
@@ -840,3 +840,334 @@ class SummaryCommand(Command):
             # Display each task with indentation
             for task_name, minutes in sorted_tasks:
                 print(f"  - {task_name}: {minutes} minutes")
+
+
+class ReportCommand:
+    """Command to export time entries to a CSV file."""
+    VALID_SORT_OPTIONS = ['date', 'category', 'duration']
+    VALID_SORT_ORDERS = ['asc', 'desc']
+    VALID_COLUMNS = ['date', 'task', 'duration', 'category', 'description']
+    DEFAULT_DELIMITER = ','
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Generate reports of tracked time"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """
+        Add report command-specific arguments to parser.
+
+        Configure the parser with all arguments needed for generating summary reports,
+        including date range and grouping options.
+
+        Args:
+            parser: The argument parser to add arguments to.
+        """
+        parser.add_argument('--output', help='Output CSV file name (default: logs_report.csv)')
+        parser.add_argument('--start-date', help='Start date for filtering logs (YYYY-MM-DD)')
+        parser.add_argument('--end-date', help='End date for filtering logs (YYYY-MM-DD)')
+        parser.add_argument('--category', help='Filter logs by category')
+        parser.add_argument('--sort-by', choices=['date', 'category', 'duration'],
+                            default='date', help='Sort logs by field (default: date)')
+        parser.add_argument('--sort-order', choices=['asc', 'desc'],
+                            default='desc', help='Sort order: ascending or descending (default: desc)')
+        parser.add_argument('--columns',
+                            help='Comma-separated list of columns to include (default: all columns)')
+        parser.add_argument('--min-duration', type=int, help='Minimum task duration in minutes to include')
+        parser.add_argument('--limit', type=int, help='Limit to top N entries based on current sort order')
+        parser.add_argument('--no-header', action='store_true',
+                                   help='Omit header row in CSV output (useful for appending to existing files)')
+        parser.add_argument('--delimiter',
+                                   help='Specify custom delimiter character for CSV output (default: ,)')
+
+    def execute(self, args):
+        """Execute the report command with the given arguments."""
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            print("No logs found.")
+            return
+
+        # Apply filters if specified
+        try:
+            filtered_logs = self._apply_filters(logs, args)
+
+            # Apply sorting
+            sorted_logs = self._sort_logs(filtered_logs, args)
+
+            # Apply limit if specified
+            limited_logs = self._apply_limit(sorted_logs, args)
+
+            # Parse and validate requested columns
+            try:
+                columns = self._parse_columns(args)
+            except ValueError as e:
+                print(f"Error with column selection: {str(e)}")
+                print("Please specify valid column names.")
+                return
+
+            # Get delimiter
+            try:
+                delimiter = self._parse_delimiter(args)
+            except ValueError as e:
+                print(f"Error with delimiter: {str(e)}")
+                print("Please specify a single character as delimiter.")
+                return
+
+            # Determine output filename
+            output_file = args.output if args.output else "logs_report.csv"
+
+            # Check if header should be included
+            include_header = not (hasattr(args, 'no_header') and args.no_header)
+
+            # Export to CSV
+            try:
+                self._export_to_csv(limited_logs, output_file, columns, include_header, delimiter)
+
+                # Prepare feedback message
+                message = f"Report saved to {output_file}."
+                if not include_header:
+                    message += " (Header row omitted)"
+
+                if delimiter != self.DEFAULT_DELIMITER:
+                    message += f" (Using '{delimiter}' as delimiter)"
+
+                if len(filtered_logs) < len(logs):
+                    message += f" ({len(filtered_logs)} of {len(logs)} entries matched filters)"
+
+                # Add limit information if applicable
+                if hasattr(args, 'limit') and args.limit is not None and len(limited_logs) < len(filtered_logs):
+                    message += f" (Limited to top {len(limited_logs)} entries)"
+
+                print(message)
+
+            except IOError as e:
+                print(f"Failed to write to output file: {str(e)}")
+
+                # Provide additional guidance based on common issues
+                if "Permission denied" in str(e):
+                    print("Check that you have write permission to the directory and the file is not in use.")
+                elif "No such file or directory" in str(e):
+                    print("The directory for the output file does not exist. Please create it first.")
+
+        except ValueError as e:
+            print(f"Error: {str(e)}")
+
+    def _parse_delimiter(self, args):
+        """Parse and validate the delimiter argument."""
+        # Use default delimiter if not specified
+        if not hasattr(args, 'delimiter') or not args.delimiter:
+            return self.DEFAULT_DELIMITER
+
+        # Validate the delimiter
+        if len(args.delimiter) != 1:
+            raise ValueError("Delimiter must be a single character")
+
+        return args.delimiter
+
+    def _get_logs(self):
+        """Retrieve all time entries from storage."""
+        # This implementation should use the same storage mechanism as other commands
+        try:
+            from storage import load_logs
+            logs = load_logs()
+
+            if not logs:
+                # This distinguishes between "no file" and "empty file"
+                # Implementation might need to be adjusted based on how load_logs behaves
+                # For example, if load_logs returns None for missing files and [] for empty files
+                if logs is None:
+                    print("Log file not found.")
+                else:
+                    print("Log file exists but contains no entries.")
+
+            return logs
+
+        except (ImportError, ModuleNotFoundError):
+            print("Error loading storage module. Check your installation.")
+            return []
+        except Exception as e:
+            print(f"Error loading logs: {str(e)}")
+            return []
+
+    def _apply_filters(self, logs, args):
+        """Apply filters based on command arguments."""
+        filtered_logs = logs
+        filter_applied = False
+        filters_applied = []
+
+        # Apply date range filters if specified
+        if args.start_date:
+            try:
+                start_date = self._validate_date(args.start_date)
+                filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) >= start_date]
+                filter_applied = True
+                filters_applied.append(f"start_date={args.start_date}")
+            except ValueError as e:
+                raise ValueError(f"Invalid start date: {str(e)}")
+
+        if args.end_date:
+            try:
+                end_date = self._validate_date(args.end_date)
+                filtered_logs = [log for log in filtered_logs if self._date_to_datetime(log['date']) <= end_date]
+                filter_applied = True
+                filters_applied.append(f"end_date={args.end_date}")
+            except ValueError as e:
+                raise ValueError(f"Invalid end date: {str(e)}")
+
+        # Apply category filter if specified
+        if args.category:
+            filtered_logs = [log for log in filtered_logs if log.get('category', '') == args.category]
+            filter_applied = True
+            filters_applied.append(f"category={args.category}")
+
+        # Apply minimum duration filter if specified
+        if hasattr(args, 'min_duration') and args.min_duration is not None:
+            try:
+                min_duration = self._validate_min_duration(args.min_duration)
+                # Convert min_duration from minutes to hours for comparison with log.duration
+                min_duration_hours = min_duration / 60.0
+                filtered_logs = [log for log in filtered_logs if float(log['duration']) >= min_duration_hours]
+                filter_applied = True
+                filters_applied.append(f"min_duration={args.min_duration} minutes")
+            except ValueError as e:
+                raise ValueError(f"Invalid minimum duration: {str(e)}")
+
+        # Log filter usage information
+        if filter_applied:
+            print(f"Applied filters: {', '.join(filters_applied)}")
+
+        return filtered_logs
+
+    def _apply_limit(self, logs, args):
+        """Apply limit to the sorted logs if specified."""
+        if not hasattr(args, 'limit') or args.limit is None:
+            return logs
+
+        try:
+            limit = self._validate_limit(args.limit)
+            return logs[:limit]
+        except ValueError as e:
+            raise ValueError(f"Invalid limit: {str(e)}")
+
+    def _validate_limit(self, limit):
+        """Validate limit value."""
+        if not isinstance(limit, int):
+            raise ValueError("Limit must be an integer")
+
+        if limit <= 0:
+            raise ValueError("Limit must be a positive integer")
+
+        return limit
+
+    def _validate_min_duration(self, min_duration):
+        """Validate minimum duration value."""
+        if not isinstance(min_duration, int):
+            raise ValueError("Minimum duration must be an integer")
+
+        if min_duration < 0:
+            raise ValueError("Minimum duration cannot be negative")
+
+        return min_duration
+
+    def _sort_logs(self, logs, args):
+        """Sort logs based on the provided sort-by parameter."""
+        sort_by = args.sort_by if hasattr(args, 'sort_by') and args.sort_by else 'date'
+
+        if sort_by not in self.VALID_SORT_OPTIONS:
+            raise ValueError(
+                f"Invalid sort option: '{sort_by}'. Valid options are: {', '.join(self.VALID_SORT_OPTIONS)}")
+
+        # Get sort order and validate
+        sort_order = self._get_sort_order(args)
+        reverse = (sort_order == 'desc')
+
+        if sort_by == 'date':
+            return sorted(logs, key=lambda log: self._date_to_datetime(log['date']), reverse=reverse)
+        elif sort_by == 'category':
+            # Sort by category, placing None/empty categories at the end
+            return sorted(logs, key=lambda log: ('category' not in log or log['category'] is None,
+                                                 log.get('category', '') or ''), reverse=reverse)
+        elif sort_by == 'duration':
+            # Sort by duration in descending order (higher duration first)
+            return sorted(logs, key=lambda log: float(log['duration']), reverse=reverse)
+
+        # Default fallback to date sorting (shouldn't reach here due to validation)
+        return sorted(logs, key=lambda log: self._date_to_datetime(log['date']))
+
+    def _parse_columns(self, args):
+        """Parse and validate the columns argument."""
+        # Use default columns if not specified
+        if not hasattr(args, 'columns') or not args.columns:
+            return self.VALID_COLUMNS
+
+        # Parse the comma-separated list
+        requested_columns = [col.strip().lower() for col in args.columns.split(',')]
+
+        # Validate the requested columns
+        unknown_columns = [col for col in requested_columns if col not in self.VALID_COLUMNS]
+        if unknown_columns:
+            raise ValueError(
+                f"Unknown column(s): {', '.join(unknown_columns)}. Valid columns are: {', '.join(self.VALID_COLUMNS)}")
+
+        return requested_columns
+
+    def _get_sort_order(self, args):
+        """Get and validate the sort order."""
+        sort_order = getattr(args, 'sort_order', 'desc')
+
+        if sort_order not in self.VALID_SORT_ORDERS:
+            raise ValueError(
+                f"Invalid sort order: '{sort_order}'. Valid options are: {', '.join(self.VALID_SORT_ORDERS)}")
+
+        return sort_order
+
+    def _validate_date(self, date_str):
+        """Validate and parse date string in YYYY-MM-DD format."""
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Date must be in YYYY-MM-DD format, got '{date_str}'")
+
+    def _date_to_datetime(self, date_str):
+        """Convert date string to datetime object for comparison."""
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            # In case the log date is in a different format, handle gracefully
+            # This is a fallback and should be aligned with the actual date format used in the app
+            return datetime.datetime.strptime("1970-01-01", "%Y-%m-%d")  # Use a default date in the past
+
+    def _export_to_csv(self, logs, output_file, columns, include_header=True, delimiter=','):
+        """Export time entries to a CSV file with the specified columns."""
+        try:
+            with open(output_file, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile, delimiter=delimiter)
+
+                # Write header row with selected columns if header is requested
+                if include_header:
+                    writer.writerow(columns)
+
+                # Write data rows with only the selected columns
+                for entry in logs:
+                    row = []
+                    for col in columns:
+                        if col == 'date':
+                            row.append(entry['date'])
+                        elif col == 'task':
+                            row.append(entry['task'])
+                        elif col == 'duration':
+                            row.append(entry['duration'])
+                        elif col == 'category':
+                            row.append(entry.get('category', ''))
+                        elif col == 'description':
+                            row.append(entry.get('description', ''))
+                    writer.writerow(row)
+        except IOError as e:
+            raise IOError(f"Failed to write CSV file: {str(e)}")

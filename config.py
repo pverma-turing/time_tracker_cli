@@ -11,5 +11,6 @@ maintainable and reduces duplication.
 AVAILABLE_COMMANDS = {
     "log": "LogCommand",
     "view": "ViewCommand",
-    "summary": "SummaryCommand"
+    "summary": "SummaryCommand",
+    'report': 'ReportCommand'
 }
