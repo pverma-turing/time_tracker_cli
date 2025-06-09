@@ -2229,18 +2229,19 @@ class TagCommand(Command):
         parser.add_argument('--add', help='Comma-separated list of tags to add (e.g., work,urgent)')
         parser.add_argument('--remove', help='Comma-separated list of tags to remove (e.g., work,urgent)')
         parser.add_argument('--list', action='store_true', help='List all tags for the specified entry')
+        parser.add_argument('--clear', action='store_true', help='Remove all tags from the specified entry')
 
     def execute(self, args):
         """Execute the tag command with the given arguments."""
         # Validate flag combinations
-        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list)])
+        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list), bool(args.clear)])
 
         if flag_count > 1:
-            print("Error: The --add, --remove, and --list flags cannot be used together.")
+            print("Error: The --add, --remove, --list, and --clear flags cannot be used together.")
             return
 
         if flag_count == 0:
-            print("Please provide one of the following flags: --add, --remove, or --list.")
+            print("Please provide one of the following flags: --add, --remove, --list, or --clear.")
             return
 
         # Get the log entry by ID
@@ -2257,11 +2258,27 @@ class TagCommand(Command):
         # Handle the different operations based on the flags
         if args.list:
             # Display all tags for the entry
-            if not entry['tags']:
+            if 'tags' not in entry:
                 print(f"No tags found for entry {args.id}.")
             else:
                 tags_string = ", ".join(entry['tags'])
                 print(f"Tags for entry {args.id}: {tags_string}")
+            return
+
+        elif args.clear:
+            # Clear all tags from the entry
+            if 'tags' not in entry:
+                print(f"No tags to clear for entry {args.id}.")
+                return
+
+            # Clear the tags
+            entry['tags'] = []
+
+            # Save the updated entry
+            self._save_entry(entry)
+
+            # Show confirmation message
+            print(f"Cleared all tags from entry {args.id}.")
             return
 
         elif args.add:
