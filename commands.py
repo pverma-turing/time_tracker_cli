@@ -1498,16 +1498,10 @@ class EditCommand(Command):
         parser.add_argument('--category', help='New category')
         parser.add_argument('--date', help='New date in YYYY-MM-DD format')
         parser.add_argument('--dry-run', action='store_true', help='Simulate the update without saving changes')
+        parser.add_argument('--interactive', action='store_true', help='Enter interactive mode for editing')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
-        # Check if at least one field is specified for update
-        update_fields = [args.task, args.duration, args.category, args.date]
-        if not any(field is not None for field in update_fields):
-            print(
-                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
-            return
-
         # Get all entries
         entries = self._get_logs()
 
@@ -1524,12 +1518,66 @@ class EditCommand(Command):
 
         # Get the entry to edit
         original_entry = entries[entry_index]
-        # Make a copy of the entry to avoid modifying the original in dry-run mode
-        entry = original_entry.copy() if args.dry_run else original_entry
+
+        # Check if update fields are provided, or if we should enter interactive mode
+        update_fields = [args.task, args.duration, args.category, args.date]
+        use_interactive = args.interactive and not any(field is not None for field in update_fields)
+
+        # If no update fields provided and not in interactive mode, show error
+        if not any(field is not None for field in update_fields) and not use_interactive:
+            print(
+                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
+            return
+
+        # Make a copy of the entry to avoid modifying the original in dry-run mode or during interactive collection
+        entry = original_entry.copy()
         changes = []
         dry_run_changes = []
 
-        # Update fields if specified
+        # Handle interactive mode
+        if use_interactive:
+            self._process_interactive_mode(entry, changes, dry_run_changes, args.dry_run)
+        else:
+            # Update fields based on provided arguments
+            self._process_command_line_args(args, entry, changes, dry_run_changes)
+
+        # Handle dry run mode
+        if args.dry_run:
+            if dry_run_changes:
+                print(
+                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}. No changes will be saved (dry-run mode).")
+            else:
+                print(f"No changes would be made to entry {args.id}. (dry-run mode)")
+            return
+
+        # Apply changes to the original entry if we have changes
+        if changes:
+            # For interactive mode, ask for confirmation before saving
+            if use_interactive and not self._confirm_changes(args.id, changes):
+                print("Update cancelled. No changes were made.")
+                return
+
+            # Apply all collected changes to the original entry
+            for key, value in entry.items():
+                if key != 'id' and original_entry.get(key) != value:
+                    original_entry[key] = value
+
+            # Save the updated entries
+            self._save_logs(entries)
+
+            print(f"Updated entry {args.id}: {', '.join(changes)}.")
+        else:
+            print(f"No changes made to entry {args.id}.")
+
+    def _process_command_line_args(self, args, entry, changes, dry_run_changes):
+        """Process updates from command line arguments.
+
+        Args:
+            args: Command line arguments.
+            entry: The entry being edited.
+            changes: List to collect change descriptions.
+            dry_run_changes: List to collect dry-run friendly descriptions.
+        """
         if args.task is not None and args.task != entry['task']:
             old_task = entry['task']
             entry['task'] = args.task
@@ -1558,23 +1606,129 @@ class EditCommand(Command):
             changes.append(f"date changed from {old_date} to {args.date}")
             dry_run_changes.append(f"date to {args.date}")
 
-        # Handle dry run mode
-        if args.dry_run:
-            if dry_run_changes:
-                print(
-                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}. No changes will be saved (dry-run mode).")
-            else:
-                print(f"No changes would be made to entry {args.id}. (dry-run mode)")
-            return
+    def _process_interactive_mode(self, entry, changes, dry_run_changes, is_dry_run=False):
+        """Process updates in interactive mode.
 
-        # Save the updated entries if not in dry run mode
-        self._save_logs(entries)
+        Args:
+            entry: The entry being edited.
+            changes: List to collect change descriptions.
+            dry_run_changes: List to collect dry-run friendly descriptions.
+            is_dry_run: Whether this is a dry run.
+        """
+        print(f"\nEditing entry {entry['id']} in interactive mode:")
+        print(f"Current values: Task: '{entry['task']}', Duration: {entry['duration']} minutes, "
+              f"Category: '{entry.get('category', 'None')}', Date: {entry['date']}")
+        print("For each field, enter a new value or press Enter to keep the current value.\n")
 
-        # Print a summary of changes
+        # Task
+        new_task = self._prompt_for_field("Task", entry['task'])
+        if new_task is not None and new_task != entry['task']:
+            old_task = entry['task']
+            entry['task'] = new_task
+            changes.append(f"task changed from '{old_task}' to '{new_task}'")
+            dry_run_changes.append(f"change task to '{new_task}'")
+
+        # Duration
+        new_duration_str = self._prompt_for_field("Duration (minutes)", str(entry['duration']))
+        if new_duration_str is not None:
+            try:
+                new_duration = int(new_duration_str)
+                if new_duration != entry['duration']:
+                    old_duration = entry['duration']
+                    entry['duration'] = new_duration
+                    changes.append(f"duration changed from {old_duration} to {new_duration} minutes")
+                    dry_run_changes.append(f"duration to {new_duration}")
+            except ValueError:
+                print("Invalid duration. Must be an integer. Keeping original value.")
+
+        # Category
+        old_category = entry.get('category', 'None')
+        display_category = old_category if old_category != 'None' else "None"
+        new_category = self._prompt_for_field("Category", display_category)
+
+        if new_category is not None:
+            # Handle empty string input to clear category
+            if new_category == "":
+                new_category = None
+
+            if new_category != old_category:
+                entry['category'] = new_category
+                if old_category == 'None':
+                    changes.append(f"category updated to '{new_category}'")
+                    dry_run_changes.append(f"add category '{new_category}'")
+                elif new_category is None or new_category == "None":
+                    changes.append(f"category removed (was '{old_category}')")
+                    dry_run_changes.append(f"remove category")
+                else:
+                    changes.append(f"category changed from '{old_category}' to '{new_category}'")
+                    dry_run_changes.append(f"change category to '{new_category}'")
+
+        # Date
+        new_date = self._prompt_for_field("Date (YYYY-MM-DD)", entry['date'])
+        if new_date is not None and new_date != entry['date']:
+            old_date = entry['date']
+            entry['date'] = new_date
+            changes.append(f"date changed from {old_date} to {new_date}")
+            dry_run_changes.append(f"date to {new_date}")
+
+        # Show summary if we're in interactive mode
         if changes:
-            print(f"Updated entry {args.id}: {', '.join(changes)}.")
+            if is_dry_run:
+                print(f"\nYou are about to update entry {entry['id']}: {', '.join(dry_run_changes)}.")
+                print("No changes will be saved (dry-run mode).")
+            else:
+                print(f"\nThe following changes will be made to entry {entry['id']}:")
+                for change in changes:
+                    print(f"- {change}")
         else:
-            print(f"No changes made to entry {args.id}.")
+            print("\nNo changes were specified.")
+
+    def _prompt_for_field(self, field_name, current_value):
+        """Prompt the user for a new value for a field.
+
+        Args:
+            field_name: The name of the field being edited.
+            current_value: The current value of the field.
+
+        Returns:
+            The new value if changed, or None if unchanged.
+        """
+        while True:
+            response = input(f"{field_name} [{current_value}]: ").strip()
+            if not response:
+                return None
+
+            confirm = input(f"Change {field_name} to '{response}'? (y/n): ").strip().lower()
+            if confirm == 'y' or confirm == 'yes':
+                return response
+            elif confirm == 'n' or confirm == 'no':
+                print(f"Keeping current {field_name}.")
+                return None
+            else:
+                print("Please answer 'y' or 'n'.")
+
+    def _confirm_changes(self, entry_id, changes):
+        """Ask the user to confirm the changes before saving.
+
+        Args:
+            entry_id: The ID of the entry being edited.
+            changes: List of change descriptions.
+
+        Returns:
+            True if the user confirms, False otherwise.
+        """
+        print("\nReview changes:")
+        for change in changes:
+            print(f"- {change}")
+
+        while True:
+            response = input("\nSave these changes? (y/n): ").strip().lower()
+            if response == 'y' or response == 'yes':
+                return True
+            elif response == 'n' or response == 'no':
+                return False
+            else:
+                print("Please answer 'y' or 'n'.")
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
