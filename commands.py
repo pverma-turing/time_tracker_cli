@@ -20,6 +20,7 @@ import json
 import os
 import sys
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import List, Dict, Any
 from datetime import datetime as dt
 from storage import load_logs
@@ -2441,3 +2442,89 @@ class TagCommand(Command):
                 else:
                     updated_logs.append(log)
             self._save_logs(updated_logs)
+
+
+class AnalyticsCommand(Command):
+    """Command to calculate and display total time spent per category."""
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        pass
+
+    def execute(self, args):
+        """Execute the analytics command."""
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            print("No log entries found.")
+            return
+
+        # Calculate time spent per category
+        category_times = self._calculate_time_per_category(logs)
+
+        # Display the results
+        self._display_results(category_times)
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _calculate_time_per_category(self, logs):
+        """Calculate the total time spent per category across all log entries.
+
+        Args:
+            logs: List of time entry objects
+
+        Returns:
+            Dictionary with categories as keys and total time (in hours) as values
+        """
+        category_times = defaultdict(float)
+
+        for entry in logs:
+            # Get the category (or 'uncategorized' if None)
+            category = entry['category'] if entry['category'] else "uncategorized"
+
+            # Add the duration to the category total
+            category_times[category] += float(entry['duration'])
+
+        # Round each category's time to the nearest 15 minutes (0.25 hours)
+        rounded_times = {}
+        for category, total_time in category_times.items():
+            # Round to nearest 0.25 (15 minutes)
+            rounded_time = round(total_time * 4) / 4
+            rounded_times[category] = rounded_time
+
+        return rounded_times
+
+    def _display_results(self, category_times):
+        """Display the total time spent per category.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+        """
+        print("Time spent per category:")
+
+        if not category_times:
+            print("No log entries found.")
+            return
+
+        # Sort categories by time spent (descending)
+        sorted_categories = sorted(category_times.items(),
+                                   key=lambda x: x[1],
+                                   reverse=True)
+
+        for category, hours in sorted_categories:
+            # Convert hours to hours and minutes
+            total_hours = int(hours)
+            total_minutes = int((hours - total_hours) * 60)
+
+            # Format and print
+            print(f"{category}: {total_hours}h {total_minutes}m")
