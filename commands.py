@@ -1504,11 +1504,18 @@ class EditCommand(Command):
         parser.add_argument('--filter-both', action='store_true',
                                 help='Use both category and date filters (requires --category and --date)')
         parser.add_argument('--reason', help='Reason for making the edit (for documentation purposes)')
+        parser.add_argument('--preview', action='store_true',
+                            help='Show detailed before/after preview of changes without saving')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
         # Get all entries
         entries = self._get_logs()
+
+        # Check if preview and interactive are used together (not allowed)
+        if args.preview and args.interactive:
+            print("Error: --preview cannot be used with --interactive.")
+            return
 
         # Check if update fields are provided, or if we should enter interactive mode
         update_fields = [args.task, args.duration, args.category, args.date]
@@ -1554,6 +1561,12 @@ class EditCommand(Command):
 
         # Get the entry to edit
         original_entry = entries[entry_index]
+
+        # Handle preview mode
+        if args.preview:
+            # Pass a single-element list with the entry to the preview method
+            self._preview_changes([original_entry], args)
+            return
 
         # Make a copy of the entry to avoid modifying the original in dry-run mode or during interactive collection
         entry = original_entry.copy()
@@ -1612,6 +1625,11 @@ class EditCommand(Command):
         if not matching_entries:
             filter_desc = self._get_filter_description(args)
             print(f"No entries found matching {filter_desc}.")
+            return
+
+        # Handle preview mode
+        if args.preview:
+            self._preview_changes(matching_entries, args)
             return
 
         # Create a template of changes to apply to all matching entries
@@ -1727,6 +1745,52 @@ class EditCommand(Command):
         elif args.filter_both:
             return f"category '{args.category}' and date '{args.date}'"
         return "filters"
+
+    def _preview_changes(self, entries, args):
+        """Generate a structured preview of changes to be made.
+
+        Args:
+            entries: List of entries to be modified
+            args: Command line arguments with field values
+        """
+        if not entries:
+            print("No entries found for the given filters.")
+            return
+
+        print(f"Previewing changes to {len(entries)} {'entry' if len(entries) == 1 else 'entries'}:")
+
+        for i, entry in enumerate(entries):
+            changes = []
+
+            # Check each field for changes
+            if args.task is not None and args.task != entry.get('task'):
+                changes.append(f"  Task: \"{entry.get('task', '')}\" → \"{args.task}\"")
+
+            if args.duration is not None and args.duration != entry.get('duration'):
+                changes.append(f"  Duration: {entry.get('duration', '')} → {args.duration}")
+
+            if args.category is not None and args.category != entry.get('category'):
+                old_category = entry.get('category', 'None')
+                if old_category == 'None':
+                    old_category = "None"
+                changes.append(f"  Category: \"{old_category}\" → \"{args.category}\"")
+
+            if args.date is not None and args.date != entry.get('date'):
+                changes.append(f"  Date: {entry.get('date', '')} → {args.date}")
+
+            # Only show entries that would actually change
+            if changes:
+                entry_id = entry.get('id', i + 1)
+                task_name = entry.get('task', 'Unknown')[:20]  # Truncate long task names
+                print(f"Entry {entry_id} ({task_name}):")
+                for change in changes:
+                    print(change)
+
+        # Show reason if provided
+        if args.reason:
+            print(f"\nReason for changes: {args.reason}")
+
+        print("\nNo changes will be made (preview mode).")
 
     def _confirm_bulk_edit(self, entries, changes, reason=None):
         """Ask for confirmation before bulk editing.
