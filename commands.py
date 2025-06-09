@@ -2255,74 +2255,82 @@ class TagCommand(Command):
         if 'tags' not in entry:
             entry['tags'] = []
 
-        # Handle the different operations based on the flags
+        # Delegate to the appropriate operation handler
         if args.list:
-            # Display all tags for the entry
-            if 'tags' not in entry:
-                print(f"No tags found for entry {args.id}.")
-            else:
-                tags_string = ", ".join(entry['tags'])
-                total_tags = len(entry['tags'])
-                print(f"Tags for entry {args.id} (total {total_tags}): {tags_string}")
-            return
-
+            self._handle_list(entry, args.id)
         elif args.clear:
-            # Clear all tags from the entry
-            if 'tags' not in entry:
-                print(f"No tags to clear for entry {args.id}.")
-                return
+            self._handle_clear(entry, args.id)
+        elif args.add:
+            self._handle_add(entry, args.id, args.add)
+        elif args.remove:
+            self._handle_remove(entry, args.id, args.remove)
 
-            # Clear the tags
-            entry['tags'] = []
+    def _handle_list(self, entry, entry_id):
+        """Handle the list operation."""
+        if not entry['tags']:
+            print(f"No tags found for entry {entry_id}.")
+        else:
+            tags_string = ", ".join(entry['tags'])
+            total_tags = len(entry['tags'])
+            print(f"Tags for entry {entry_id} (total {total_tags}): {tags_string}")
 
-            # Save the updated entry
-            self._save_entry(entry)
-
-            # Show confirmation and summary message
-            print(f"Cleared all tags from entry {args.id}. Total tags now: 0.")
+    def _handle_clear(self, entry, entry_id):
+        """Handle the clear operation."""
+        if not entry['tags']:
+            print(f"No tags to clear for entry {entry_id}.")
             return
 
-        elif args.add:
-            # Parse the comma-separated tags
-            new_tags = [tag.strip() for tag in args.add.split(',')]
+        # Clear the tags
+        entry['tags'] = []
 
-            # Add tags to the entry (without duplicates)
-            added_tags = self._add_tags_to_entry(entry, new_tags)
+        # Save the updated entry
+        self._save_entry(entry)
 
-            # Save the updated entry
-            self._save_entry(entry)
+        # Show confirmation and summary message
+        print(f"Cleared all tags from entry {entry_id}. Total tags now: 0.")
 
-            # Show confirmation message
-            if added_tags:
-                print(f"Added tags {added_tags} to entry {args.id}.")
-                # Show summary message
-                total_tags = len(entry['tags'])
-                print(f"Total tags now: {total_tags}.")
-            else:
-                print(f"No new tags added to entry {args.id}. All tags already exist.")
-                total_tags = len(entry['tags'])
-                print(f"Total tags: {total_tags}.")
+    def _handle_add(self, entry, entry_id, add_arg):
+        """Handle the add operation."""
+        # Parse the comma-separated tags
+        new_tags = [tag.strip() for tag in add_arg.split(',')]
 
-        elif args.remove:
-            # Parse the comma-separated tags
-            tags_to_remove = [tag.strip() for tag in args.remove.split(',')]
+        # Add tags to the entry (without duplicates)
+        added_tags = self._add_tags_to_entry(entry, new_tags)
 
-            # Remove tags from the entry
-            removed_tags = self._remove_tags_from_entry(entry, tags_to_remove)
+        # Save the updated entry
+        self._save_entry(entry)
 
-            if not removed_tags:
-                print("No matching tags found to remove.")
-                return
-
-            # Save the updated entry
-            self._save_entry(entry)
-
-            # Show confirmation message and summary
-            print(f"Removed tags {removed_tags} from entry {args.id}.")
+        # Show confirmation message
+        if added_tags:
+            print(f"Added tags {added_tags} to entry {entry_id}.")
             # Show summary message
             total_tags = len(entry['tags'])
             print(f"Total tags now: {total_tags}.")
+        else:
+            print(f"No new tags added to entry {entry_id}. All tags already exist.")
+            total_tags = len(entry['tags'])
+            print(f"Total tags: {total_tags}.")
 
+    def _handle_remove(self, entry, entry_id, remove_arg):
+        """Handle the remove operation."""
+        # Parse the comma-separated tags
+        tags_to_remove = [tag.strip() for tag in remove_arg.split(',')]
+
+        # Remove tags from the entry
+        removed_tags = self._remove_tags_from_entry(entry, tags_to_remove)
+
+        if not removed_tags:
+            print("No matching tags found to remove.")
+            return
+
+        # Save the updated entry
+        self._save_entry(entry)
+
+        # Show confirmation message and summary
+        print(f"Removed tags {removed_tags} from entry {entry_id}.")
+        # Show summary message
+        total_tags = len(entry['tags'])
+        print(f"Total tags now: {total_tags}.")
     def _get_log_by_id(self, entry_id):
         """Retrieve a log entry by its ID."""
         # This would be replaced with actual retrieval logic
