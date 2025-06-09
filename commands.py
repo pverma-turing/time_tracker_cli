@@ -2262,7 +2262,8 @@ class TagCommand(Command):
                 print(f"No tags found for entry {args.id}.")
             else:
                 tags_string = ", ".join(entry['tags'])
-                print(f"Tags for entry {args.id}: {tags_string}")
+                total_tags = len(entry['tags'])
+                print(f"Tags for entry {args.id} (total {total_tags}): {tags_string}")
             return
 
         elif args.clear:
@@ -2277,8 +2278,8 @@ class TagCommand(Command):
             # Save the updated entry
             self._save_entry(entry)
 
-            # Show confirmation message
-            print(f"Cleared all tags from entry {args.id}.")
+            # Show confirmation and summary message
+            print(f"Cleared all tags from entry {args.id}. Total tags now: 0.")
             return
 
         elif args.add:
@@ -2292,7 +2293,15 @@ class TagCommand(Command):
             self._save_entry(entry)
 
             # Show confirmation message
-            print(f"Added tags {added_tags} to entry {args.id}")
+            if added_tags:
+                print(f"Added tags {added_tags} to entry {args.id}.")
+                # Show summary message
+                total_tags = len(entry['tags'])
+                print(f"Total tags now: {total_tags}.")
+            else:
+                print(f"No new tags added to entry {args.id}. All tags already exist.")
+                total_tags = len(entry['tags'])
+                print(f"Total tags: {total_tags}.")
 
         elif args.remove:
             # Parse the comma-separated tags
@@ -2308,8 +2317,11 @@ class TagCommand(Command):
             # Save the updated entry
             self._save_entry(entry)
 
-            # Show confirmation message
-            print(f"Removed tags {removed_tags} from entry {args.id}")
+            # Show confirmation message and summary
+            print(f"Removed tags {removed_tags} from entry {args.id}.")
+            # Show summary message
+            total_tags = len(entry['tags'])
+            print(f"Total tags now: {total_tags}.")
 
     def _get_log_by_id(self, entry_id):
         """Retrieve a log entry by its ID."""
