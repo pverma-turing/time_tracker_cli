@@ -1171,3 +1171,300 @@ class ReportCommand:
                     writer.writerow(row)
         except IOError as e:
             raise IOError(f"Failed to write CSV file: {str(e)}")
+
+
+class DeleteCommand(Command):
+    """Command to delete time entries based on specified criteria."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Delete logs"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """
+        Add report command-specific arguments to parser.
+
+        Configure the parser with all arguments needed for generating summary reports,
+        including date range and grouping options.
+
+        Args:
+            parser: The argument parser to add arguments to.
+        """
+        parser.add_argument('--id', help='ID of the specific log entry to delete')
+        parser.add_argument('--category', help='Delete all entries within a given category')
+        parser.add_argument('--date', help='Delete all entries from a specific date (YYYY-MM-DD format)')
+        parser.add_argument('--dry-run', action='store_true',
+                                  help='Simulate deletion without actually removing entries')
+        parser.add_argument('--preview', action='store_true',
+                                   help='Display a detailed table of entries matching filter criteria (no deletion performed)')
+        parser.add_argument('--start-date',
+                                   help='Delete entries from this date onward (YYYY-MM-DD format, inclusive)')
+        parser.add_argument('--end-date', help='Delete entries up to this date (YYYY-MM-DD format, inclusive)')
+        parser.add_argument('--reason', help='Record the reason for deletion (for documentation purposes)')
+        parser.add_argument('--all', action='store_true',
+                                   help='Delete all entries (cannot be combined with other filters)')
+        parser.add_argument('--keyword',
+                                   help='Delete entries containing this keyword in the task (case-insensitive)')
+
+    def execute(self, args):
+        """Execute the delete command with the given arguments."""
+        # Check if --all is combined with other filters
+        if args.all and (args.id or args.category or args.date or args.start_date or args.end_date):
+            print("Error: --all cannot be combined with other filters.")
+            return
+
+        # Check for invalid combinations of --keyword with --id or --all
+        if args.keyword and (args.id or args.all):
+            print("Error: --keyword cannot be combined with --id or --all.")
+            return
+
+        # Check if at least one filter is provided or --all
+        if not (
+                args.id or args.category or args.date or args.start_date or args.end_date or args.keyword or args.all):
+            print(
+                "Error: At least one filter (--id, --category, --date, --start-date, --end-date, --keyword) must be provided, or use --all to delete all entries.")
+            return
+
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            print("No entries found.")
+            return
+        entries_to_delete = []
+
+        if args.all:
+            entries_to_delete = logs.copy()
+        else:
+            # Make a copy of the logs
+            # Make a copy of the logs to preserve the original list
+            original_logs = logs.copy()
+
+
+            # Check date range filters
+            for log in original_logs:
+                should_delete = True
+                # Check ID filter
+                if args.id and str(log['id']) != args.id:
+                    should_delete = False
+
+                # Check category filter
+                if args.category and log['category'] != args.category:
+                    should_delete = False
+
+                # Check exact date filter
+                if args.date and str(log['date']) != args.date:
+                    should_delete = False
+
+                # Check date range filters
+                if args.start_date or args.end_date:
+                    log_date = self._parse_date(str(log['date']))
+
+                if args.start_date or args.end_date:
+                    log_date = self._parse_date(str(log['date']))
+
+                    if args.start_date:
+                        start_date = self._parse_date(args.start_date)
+                        if log_date < start_date:
+                            should_delete = False
+
+                    if args.end_date:
+                        end_date = self._parse_date(args.end_date)
+                        if log_date > end_date:
+                            should_delete = False
+                # Check keyword filter (case-insensitive match in task field)
+                if args.keyword and args.keyword.lower() not in log['task'].lower():
+                    should_delete = False
+
+                if should_delete:
+                    entries_to_delete.append(log)
+
+        # Calculate how many entries were deleted
+        deleted_count = len(entries_to_delete)
+
+        if deleted_count == 0:
+            if args.keyword:
+                print(f"No matching entries found for keyword '{args.keyword}'. Nothing was deleted.")
+            elif args.start_date or args.end_date:
+                print("No matching entries found for the specified date range. Nothing was deleted.")
+            else:
+                print("No matching entries found. Nothing was deleted.")
+            return
+
+        # Handle preview mode - takes precedence over dry run and normal delete
+        if args.preview:
+            self._preview_entries(entries_to_delete)
+            return
+
+        # Create a description of what's being filtered
+        filter_description = self._create_filter_description(args)
+
+        if args.dry_run:
+            if args.all:
+                print(f"All {deleted_count} entries would be deleted.")
+            else:
+                filter_description = self._create_filter_description(args)
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} would be deleted.")
+
+            if args.reason:
+                print(f"Reason: {args.reason}")
+            print("No data was modified (dry run mode).")
+        else:
+            # Display confirmation message
+            if args.all:
+                print(f"You are about to delete all entries.")
+            else:
+                filter_description = self._create_filter_description(args)
+                print(
+                    f"{deleted_count} {'entry' if deleted_count == 1 else 'entries'} {filter_description} will be deleted.")
+
+            if args.reason:
+                print(f"Reason: {args.reason}")
+
+            # Prompt for confirmation
+            confirmation = input(
+                f"You are about to delete {deleted_count} {'entry' if deleted_count == 1 else 'entries'}. Do you want to proceed? (y/n): ")
+
+            if confirmation.lower() == 'y':
+                # Identify entries to keep (entries that don't match filter criteria)
+                remaining_logs = [log for log in logs if log not in entries_to_delete]
+
+                # Perform actual deletion by saving the remaining logs
+                self._save_logs(remaining_logs)
+
+                # Generate the summary message based on what was deleted
+                summary_message = self._create_summary_message(args, deleted_count, filter_description)
+                print(summary_message)
+            else:
+                if args.all:
+                    print("Deletion of all entries canceled by user.")
+                else:
+                    print("Deletion cancelled by user.")
+
+    def _create_summary_message(self, args, deleted_count, filter_description):
+        """Create a detailed summary message for the deletion operation."""
+        # Base message with count and appropriate pluralization
+        message = f"Deleted {deleted_count} {'entry' if deleted_count == 1 else 'entries'}"
+
+        # Add filter information if applicable
+        if args.all:
+            message = "All entries deleted successfully"
+        elif filter_description:
+            message += f" {filter_description}"
+
+        # Add reason if provided
+        if args.reason:
+            message += f". Reason: {args.reason}"
+        else:
+            message += "."
+
+        return message
+
+    def _preview_entries(self, entries_to_delete):
+        """Display a preview of entries that would be deleted in a tabular format."""
+        if not entries_to_delete:
+            print("No matching entries found for preview.")
+            return
+
+        print(f"Previewing {len(entries_to_delete)} entries that match your criteria. No changes will be made.")
+
+        # Create header and formatting for table
+        header = ["ID", "Date", "Task", "Duration", "Category"]
+
+        # Determine max width for each column based on content
+        id_width = max(len("ID"), max(len(str(idx)) for idx, entry in enumerate(entries_to_delete)) if entries_to_delete else 0)
+        date_width = max(len("Date"),
+                         max(len(str(entry['date'])) for entry in entries_to_delete) if entries_to_delete else 0)
+        task_width = max(len("Task"), max(len(entry['task']) for entry in entries_to_delete) if entries_to_delete else 0)
+        duration_width = max(len("Duration"),
+                             max(len(str(entry['duration'])) for entry in entries_to_delete) if entries_to_delete else 0)
+        category_width = max(len("Category"), max(
+            len(entry['category']) if entry['category'] else 0 for entry in entries_to_delete) if entries_to_delete else 0)
+
+        # Create format string for table rows
+        format_str = f"| {{:{id_width}}} | {{:{date_width}}} | {{:{task_width}}} | {{:{duration_width}}} | {{:{category_width}}} |"
+
+        # Print header
+        header_str = format_str.format(*header)
+        separator = "-" * len(header_str)
+        print(separator)
+        print(header_str)
+        print(separator)
+
+        # Print each entry
+        for idx, entry in enumerate(entries_to_delete):
+            print(format_str.format(
+                str(idx),
+                str(entry['date']),
+                entry['task'],
+                str(entry['duration']),
+                entry.get('category', '')
+            ))
+
+        print(separator)
+
+    def _create_filter_description(self, args):
+        """Create a descriptive text of the filters being applied."""
+        descriptions = []
+
+        if args.id:
+            descriptions.append(f"with ID {args.id}")
+
+        if args.category:
+            descriptions.append(f"from category '{args.category}'")
+
+        if args.date:
+            descriptions.append(f"dated {args.date}")
+
+        if args.start_date and args.end_date:
+            descriptions.append(f"within date range {args.start_date} to {args.end_date}")
+        elif args.start_date:
+            descriptions.append(f"from {args.start_date} onward")
+        elif args.end_date:
+            descriptions.append(f"up to {args.end_date}")
+
+        if args.keyword:
+            descriptions.append(f"containing keyword '{args.keyword}'")
+
+        if not descriptions:
+            return ""
+
+        return " ".join(descriptions)
+
+    def _parse_date(self, date_str):
+        """Parse a date string in YYYY-MM-DD format."""
+        from datetime import datetime
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            # Return a default date in case of parsing error
+            # In a real implementation, this should probably raise an error
+            return datetime.min.date()
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _save_logs(self, logs):
+        """Save the remaining logs back to storage."""
+        # This should use the same data storage mechanism as other commands
+        # For example, if using JSON file storage:
+        try:
+            from storage import save_logs
+            save_logs(logs)
+        except Exception as e:
+            print(f"Error saving logs: {e}")

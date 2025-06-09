@@ -12,5 +12,6 @@ AVAILABLE_COMMANDS = {
     "log": "LogCommand",
     "view": "ViewCommand",
     "summary": "SummaryCommand",
-    'report': 'ReportCommand'
+    'report': 'ReportCommand',
+    'delete': "DeleteCommand",
 }
