@@ -1503,6 +1503,7 @@ class EditCommand(Command):
         parser.add_argument('--filter-date', dest='filter_date', help='Edit all entries on this date (YYYY-MM-DD)')
         parser.add_argument('--filter-both', action='store_true',
                                 help='Use both category and date filters (requires --category and --date)')
+        parser.add_argument('--reason', help='Reason for making the edit (for documentation purposes)')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
@@ -1569,8 +1570,9 @@ class EditCommand(Command):
         # Handle dry run mode
         if args.dry_run:
             if dry_run_changes:
+                reason_str = f" Reason: {args.reason}" if args.reason else ""
                 print(
-                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}. No changes will be saved (dry-run mode).")
+                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}.{reason_str} No changes will be saved (dry-run mode).")
             else:
                 print(f"No changes would be made to entry {args.id}. (dry-run mode)")
             return
@@ -1590,7 +1592,9 @@ class EditCommand(Command):
             # Save the updated entries
             self._save_logs(entries)
 
-            print(f"Updated entry {args.id}: {', '.join(changes)}.")
+            # Display reason if provided
+            reason_str = f" Reason: {args.reason}" if args.reason else ""
+            print(f"Updated entry {args.id}: {', '.join(changes)}.{reason_str}")
         else:
             print(f"No changes made to entry {args.id}.")
 
@@ -1639,13 +1643,14 @@ class EditCommand(Command):
         # Handle dry run mode
         if args.dry_run:
             filter_desc = self._get_filter_description(args)
+            reason_str = f"\nReason: {args.reason}" if args.reason else ""
             print(f"You are about to update {len(matching_entries)} entries matching {filter_desc}:")
-            print(f"Changes to apply: {', '.join(dry_run_description)}")
+            print(f"Changes to apply: {', '.join(dry_run_description)}{reason_str}")
             print("No changes will be saved (dry-run mode).")
             return
 
         # Ask for confirmation before making bulk changes
-        if not self._confirm_bulk_edit(matching_entries, changes_description):
+        if not self._confirm_bulk_edit(matching_entries, changes_description, args.reason):
             print("Bulk update cancelled. No changes were made.")
             return
 
@@ -1671,7 +1676,8 @@ class EditCommand(Command):
 
         # Report results
         if updated_count > 0:
-            print(f"Successfully updated {updated_count} entries: {', '.join(changes_description)}.")
+            reason_str = f" Reason: {args.reason}" if args.reason else ""
+            print(f"Successfully updated {updated_count} entries: {', '.join(changes_description)}.{reason_str}")
         else:
             print("No changes were made to any entries. All values were already set to the requested values.")
 
@@ -1722,7 +1728,7 @@ class EditCommand(Command):
             return f"category '{args.category}' and date '{args.date}'"
         return "filters"
 
-    def _confirm_bulk_edit(self, entries, changes):
+    def _confirm_bulk_edit(self, entries, changes, reason=None):
         """Ask for confirmation before bulk editing.
 
         Args:
@@ -1735,6 +1741,9 @@ class EditCommand(Command):
         print(f"\nYou are about to update {len(entries)} entries with the following changes:")
         for change in changes:
             print(f"- {change}")
+
+        if reason:
+            print(f"\nReason: {reason}")
 
         print("\nMatching entries:")
         print(f"{'ID':<5} {'Date':<12} {'Task':<20} {'Duration':<10} {'Category':<15}")
