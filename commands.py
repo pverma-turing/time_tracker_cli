@@ -2228,18 +2228,19 @@ class TagCommand(Command):
         parser.add_argument('--id', required=True, type=int, help='ID of the entry to tag')
         parser.add_argument('--add', help='Comma-separated list of tags to add (e.g., work,urgent)')
         parser.add_argument('--remove', help='Comma-separated list of tags to remove (e.g., work,urgent)')
+        parser.add_argument('--list', action='store_true', help='List all tags for the specified entry')
 
     def execute(self, args):
         """Execute the tag command with the given arguments."""
-        # Check if tags were provided
-        # Check if both add and remove flags are used
-        if args.add and args.remove:
-            print("Error: Cannot use --add and --remove flags together.")
+        # Validate flag combinations
+        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list)])
+
+        if flag_count > 1:
+            print("Error: The --add, --remove, and --list flags cannot be used together.")
             return
 
-        # Check if at least one of add or remove flags is provided
-        if not args.add and not args.remove:
-            print("Please provide tags using either the --add or --remove flag.")
+        if flag_count == 0:
+            print("Please provide one of the following flags: --add, --remove, or --list.")
             return
 
         # Get the log entry by ID
@@ -2249,8 +2250,21 @@ class TagCommand(Command):
             print(f"No entry found with ID {args.id}")
             return
 
-        # Handle add or remove operation
-        if args.add:
+        # Initialize tags list if it doesn't exist
+        if 'tags' not in entry:
+            entry['tags'] = []
+
+        # Handle the different operations based on the flags
+        if args.list:
+            # Display all tags for the entry
+            if not entry['tags']:
+                print(f"No tags found for entry {args.id}.")
+            else:
+                tags_string = ", ".join(entry['tags'])
+                print(f"Tags for entry {args.id}: {tags_string}")
+            return
+
+        elif args.add:
             # Parse the comma-separated tags
             new_tags = [tag.strip() for tag in args.add.split(',')]
 
