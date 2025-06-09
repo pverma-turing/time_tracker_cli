@@ -2230,18 +2230,31 @@ class TagCommand(Command):
         parser.add_argument('--remove', help='Comma-separated list of tags to remove (e.g., work,urgent)')
         parser.add_argument('--list', action='store_true', help='List all tags for the specified entry')
         parser.add_argument('--clear', action='store_true', help='Remove all tags from the specified entry')
+        parser.add_argument('--all', action='store_true', help='List all unique tags across all entries')
 
     def execute(self, args):
         """Execute the tag command with the given arguments."""
-        # Validate flag combinations
-        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list), bool(args.clear)])
+        # Count the operation flags
+        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list),
+                          bool(args.clear), bool(args.all)])
 
+        # Validate flag combinations
         if flag_count > 1:
-            print("Error: The --add, --remove, --list, and --clear flags cannot be used together.")
+            print("Error: The --add, --remove, --list, --clear, and --all flags cannot be used together.")
             return
 
         if flag_count == 0:
-            print("Please provide one of the following flags: --add, --remove, --list, or --clear.")
+            print("Please provide one of the following flags: --add, --remove, --list, --clear, or --all.")
+            return
+
+        # Handle the --all flag (which doesn't need an entry ID)
+        if args.all:
+            self._handle_all_tags()
+            return
+
+        # For all other operations, we need an entry ID
+        if not args.id:
+            print("Error: The --id flag is required for this operation.")
             return
 
         # Get the log entry by ID
@@ -2264,6 +2277,24 @@ class TagCommand(Command):
             self._handle_add(entry, args.id, args.add)
         elif args.remove:
             self._handle_remove(entry, args.id, args.remove)
+    def _handle_all_tags(self):
+        """Handle the --all flag by displaying all unique tags across all entries."""
+        # Get all log entries
+        all_entries = self._get_logs()
+
+        # Collect all unique tags
+        unique_tags = set()
+        for entry in all_entries:
+            if entry.get('tags'):
+                unique_tags.update(entry['tags'])
+
+        # Display the tags sorted alphabetically
+        if unique_tags:
+            sorted_tags = sorted(unique_tags)
+            tags_string = ", ".join(sorted_tags)
+            print(f"All tags: {tags_string}")
+        else:
+            print("No tags found.")
 
     def _handle_list(self, entry, entry_id):
         """Handle the list operation."""
