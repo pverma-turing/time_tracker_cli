@@ -2227,12 +2227,19 @@ class TagCommand(Command):
         """Add command-specific arguments to parser."""
         parser.add_argument('--id', required=True, type=int, help='ID of the entry to tag')
         parser.add_argument('--add', help='Comma-separated list of tags to add (e.g., work,urgent)')
+        parser.add_argument('--remove', help='Comma-separated list of tags to remove (e.g., work,urgent)')
 
     def execute(self, args):
         """Execute the tag command with the given arguments."""
         # Check if tags were provided
-        if not args.add:
-            print("Please provide tags using the --add flag.")
+        # Check if both add and remove flags are used
+        if args.add and args.remove:
+            print("Error: Cannot use --add and --remove flags together.")
+            return
+
+        # Check if at least one of add or remove flags is provided
+        if not args.add and not args.remove:
+            print("Please provide tags using either the --add or --remove flag.")
             return
 
         # Get the log entry by ID
@@ -2242,17 +2249,36 @@ class TagCommand(Command):
             print(f"No entry found with ID {args.id}")
             return
 
-        # Parse the comma-separated tags
-        new_tags = [tag.strip() for tag in args.add.split(',')]
+        # Handle add or remove operation
+        if args.add:
+            # Parse the comma-separated tags
+            new_tags = [tag.strip() for tag in args.add.split(',')]
 
-        # Add tags to the entry (without duplicates)
-        updated_tags = self._add_tags_to_entry(entry, new_tags)
+            # Add tags to the entry (without duplicates)
+            added_tags = self._add_tags_to_entry(entry, new_tags)
 
-        # Save the updated entry
-        self._save_entry(entry)
+            # Save the updated entry
+            self._save_entry(entry)
 
-        # Show confirmation message
-        print(f"Added tags {updated_tags} to entry {args.id}")
+            # Show confirmation message
+            print(f"Added tags {added_tags} to entry {args.id}")
+
+        elif args.remove:
+            # Parse the comma-separated tags
+            tags_to_remove = [tag.strip() for tag in args.remove.split(',')]
+
+            # Remove tags from the entry
+            removed_tags = self._remove_tags_from_entry(entry, tags_to_remove)
+
+            if not removed_tags:
+                print("No matching tags found to remove.")
+                return
+
+            # Save the updated entry
+            self._save_entry(entry)
+
+            # Show confirmation message
+            print(f"Removed tags {removed_tags} from entry {args.id}")
 
     def _get_log_by_id(self, entry_id):
         """Retrieve a log entry by its ID."""
@@ -2282,6 +2308,18 @@ class TagCommand(Command):
                 added_tags.append(tag)
 
         return added_tags
+
+    def _remove_tags_from_entry(self, entry, tags_to_remove):
+        """Remove tags from an entry and return the list of removed tags."""
+        # Keep track of which tags were actually removed
+        removed_tags = []
+
+        for tag in tags_to_remove:
+            if tag in entry['tags']:
+                entry['tags'].remove(tag)
+                removed_tags.append(tag)
+
+        return removed_tags
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
