@@ -1499,12 +1499,47 @@ class EditCommand(Command):
         parser.add_argument('--date', help='New date in YYYY-MM-DD format')
         parser.add_argument('--dry-run', action='store_true', help='Simulate the update without saving changes')
         parser.add_argument('--interactive', action='store_true', help='Enter interactive mode for editing')
+        parser.add_argument('--filter-category', dest='filter_category', help='Edit all entries in this category')
+        parser.add_argument('--filter-date', dest='filter_date', help='Edit all entries on this date (YYYY-MM-DD)')
+        parser.add_argument('--filter-both', action='store_true',
+                                help='Use both category and date filters (requires --category and --date)')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
         # Get all entries
         entries = self._get_logs()
 
+        # Check if update fields are provided, or if we should enter interactive mode
+        update_fields = [args.task, args.duration, args.category, args.date]
+        use_interactive = args.interactive and not any(field is not None for field in update_fields)
+
+        # If no update fields provided and not in interactive mode, show error
+        if not any(field is not None for field in update_fields) and not use_interactive:
+            print(
+                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
+            return
+
+        # Validate that filter-both has both category and date
+        if args.filter_both and (args.category is None or args.date is None):
+            print("Error: When using --filter-both, you must provide both --category and --date for filtering.")
+            return
+
+        # Determine if we're in bulk edit mode or single entry mode
+        if args.id is not None:
+            # Single entry mode
+            self._edit_single_entry(args, entries, use_interactive)
+        else:
+            # Bulk edit mode
+            self._edit_multiple_entries(args, entries, use_interactive)
+
+    def _edit_single_entry(self, args, entries, use_interactive):
+        """Edit a single entry by ID.
+
+        Args:
+            args: Command line arguments
+            entries: List of all entries
+            use_interactive: Whether to use interactive mode
+        """
         # Find the entry with the specified ID
         entry_index = None
         for i, entry in enumerate(entries):
@@ -1518,16 +1553,6 @@ class EditCommand(Command):
 
         # Get the entry to edit
         original_entry = entries[entry_index]
-
-        # Check if update fields are provided, or if we should enter interactive mode
-        update_fields = [args.task, args.duration, args.category, args.date]
-        use_interactive = args.interactive and not any(field is not None for field in update_fields)
-
-        # If no update fields provided and not in interactive mode, show error
-        if not any(field is not None for field in update_fields) and not use_interactive:
-            print(
-                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
-            return
 
         # Make a copy of the entry to avoid modifying the original in dry-run mode or during interactive collection
         entry = original_entry.copy()
@@ -1568,6 +1593,171 @@ class EditCommand(Command):
             print(f"Updated entry {args.id}: {', '.join(changes)}.")
         else:
             print(f"No changes made to entry {args.id}.")
+
+    def _edit_multiple_entries(self, args, entries, use_interactive):
+        """Edit multiple entries based on filters.
+
+        Args:
+            args: Command line arguments
+            entries: List of all entries
+            use_interactive: Whether to use interactive mode
+        """
+        # Find entries matching the filters
+        matching_entries = self._find_matching_entries(args, entries)
+
+        if not matching_entries:
+            filter_desc = self._get_filter_description(args)
+            print(f"No entries found matching {filter_desc}.")
+            return
+
+        # Create a template of changes to apply to all matching entries
+        template_changes = {}
+        changes_description = []
+        dry_run_description = []
+
+        # Process command line arguments to build the template
+        if args.task is not None:
+            template_changes['task'] = args.task
+            changes_description.append(f"task set to '{args.task}'")
+            dry_run_description.append(f"set task to '{args.task}'")
+
+        if args.duration is not None:
+            template_changes['duration'] = args.duration
+            changes_description.append(f"duration set to {args.duration} minutes")
+            dry_run_description.append(f"set duration to {args.duration}")
+
+        if args.category is not None:
+            template_changes['category'] = args.category
+            changes_description.append(f"category set to '{args.category}'")
+            dry_run_description.append(f"set category to '{args.category}'")
+
+        if args.date is not None:
+            template_changes['date'] = args.date
+            changes_description.append(f"date set to {args.date}")
+            dry_run_description.append(f"set date to {args.date}")
+
+        # Handle dry run mode
+        if args.dry_run:
+            filter_desc = self._get_filter_description(args)
+            print(f"You are about to update {len(matching_entries)} entries matching {filter_desc}:")
+            print(f"Changes to apply: {', '.join(dry_run_description)}")
+            print("No changes will be saved (dry-run mode).")
+            return
+
+        # Ask for confirmation before making bulk changes
+        if not self._confirm_bulk_edit(matching_entries, changes_description):
+            print("Bulk update cancelled. No changes were made.")
+            return
+
+        # Apply changes to all matching entries
+        updated_count = 0
+        for entry in matching_entries:
+            original_values = {}
+            has_changes = False
+
+            # Check if the changes would actually modify this entry
+            for key, value in template_changes.items():
+                if entry.get(key) != value:
+                    original_values[key] = entry.get(key)
+                    entry[key] = value
+                    has_changes = True
+
+            # Only count entries that actually changed
+            if has_changes:
+                updated_count += 1
+
+        # Save the updated entries
+        self._save_logs(entries)
+
+        # Report results
+        if updated_count > 0:
+            print(f"Successfully updated {updated_count} entries: {', '.join(changes_description)}.")
+        else:
+            print("No changes were made to any entries. All values were already set to the requested values.")
+
+    def _find_matching_entries(self, args, entries):
+        """Find entries matching the filter criteria.
+
+        Args:
+            args: Command line arguments
+            entries: List of all entries
+
+        Returns:
+            List of matching entries
+        """
+        matching_entries = []
+
+        if args.filter_category:
+            # Filter by category only
+            for entry in entries:
+                if entry.get('category') == args.filter_category:
+                    matching_entries.append(entry)
+        elif args.filter_date:
+            # Filter by date only
+            for entry in entries:
+                if entry.get('date') == args.filter_date:
+                    matching_entries.append(entry)
+        elif args.filter_both:
+            # Filter by both category and date
+            for entry in entries:
+                if entry.get('category') == args.category and entry.get('date') == args.date:
+                    matching_entries.append(entry)
+
+        return matching_entries
+
+    def _get_filter_description(self, args):
+        """Get a human-readable description of the filter.
+
+        Args:
+            args: Command line arguments
+
+        Returns:
+            String describing the filter
+        """
+        if args.filter_category:
+            return f"category '{args.filter_category}'"
+        elif args.filter_date:
+            return f"date '{args.filter_date}'"
+        elif args.filter_both:
+            return f"category '{args.category}' and date '{args.date}'"
+        return "filters"
+
+    def _confirm_bulk_edit(self, entries, changes):
+        """Ask for confirmation before bulk editing.
+
+        Args:
+            entries: The entries that will be edited
+            changes: Description of changes to make
+
+        Returns:
+            True if user confirms, False otherwise
+        """
+        print(f"\nYou are about to update {len(entries)} entries with the following changes:")
+        for change in changes:
+            print(f"- {change}")
+
+        print("\nMatching entries:")
+        print(f"{'ID':<5} {'Date':<12} {'Task':<20} {'Duration':<10} {'Category':<15}")
+        print("-" * 65)
+
+        # Show sample of entries (limited to first 5 for readability)
+        display_count = min(5, len(entries))
+        for i in range(display_count):
+            entry = entries[i]
+            print(
+                f"{entry.get('id', 'N/A'):<5} {entry.get('date', 'N/A'):<12} {entry.get('task', 'N/A')[:20]:<20} {entry.get('duration', 'N/A'):<10} {entry.get('category', 'N/A'):<15}")
+
+        if len(entries) > display_count:
+            print(f"... and {len(entries) - display_count} more entries")
+
+        while True:
+            response = input("\nDo you want to apply these changes to all matching entries? (y/n): ").strip().lower()
+            if response == 'y' or response == 'yes':
+                return True
+            elif response == 'n' or response == 'no':
+                return False
+            else:
+                print("Please answer 'y' or 'n'.")
 
     def _process_command_line_args(self, args, entry, changes, dry_run_changes):
         """Process updates from command line arguments.
