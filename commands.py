@@ -242,7 +242,7 @@ def filter_and_sort_logs(logs: List[Dict[str, Any]], args) -> List[Dict[str, Any
         active_filters.append(f"date '{args.date}'")
         try:
             # Validate date format by attempting to parse it
-            date_obj = datetime.datetime.date.fromisoformat(args.date)
+            date_obj = datetime.date.fromisoformat(args.date)
             date_str = date_obj.isoformat()  # Normalize to standard format
             filtered_logs = [entry for entry in filtered_logs
                              if entry.get('date', '') == date_str]
@@ -1506,11 +1506,31 @@ class EditCommand(Command):
         parser.add_argument('--reason', help='Reason for making the edit (for documentation purposes)')
         parser.add_argument('--preview', action='store_true',
                             help='Show detailed before/after preview of changes without saving')
+        parser.add_argument('--rename-category',
+                                help='New category name when renaming categories (use with --category)')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
         # Get all entries
         entries = self._get_logs()
+
+        # Handle category rename mode
+        if args.rename_category is not None:
+            # Validate that only --category is used with --rename-category
+            if args.task is not None or args.duration is not None or args.date is not None:
+                print("Error: --rename-category can only be used with --category.")
+                return
+            if args.category is None:
+                print("Error: --rename-category requires --category to specify the old category name.")
+                return
+
+            if args.interactive:
+                print("Error: --rename-category cannot be used with --interactive.")
+                return
+
+                # Process category renaming
+            self._rename_category(args, entries)
+            return
 
         # Check if preview and interactive are used together (not allowed)
         if args.preview and args.interactive:
@@ -1745,6 +1765,89 @@ class EditCommand(Command):
         elif args.filter_both:
             return f"category '{args.category}' and date '{args.date}'"
         return "filters"
+
+    def _rename_category(self, args, entries):
+        """Rename a category across all matching entries.
+
+        Args:
+            args: Command line arguments
+            entries: List of all entries
+        """
+        old_category = args.category
+        new_category = args.rename_category
+
+        # Find entries with the specified category
+        matching_entries = []
+        for entry in entries:
+            if entry.get('category') == old_category:
+                matching_entries.append(entry)
+
+        if not matching_entries:
+            print(f"No entries found with category '{old_category}'.")
+            return
+
+        # Handle preview or dry-run mode
+        if args.preview:
+            print(f"Previewing category rename from '{old_category}' to '{new_category}':")
+            print(
+                f"Found {len(matching_entries)} {'entry' if len(matching_entries) == 1 else 'entries'} with category '{old_category}'")
+
+            for i, entry in enumerate(matching_entries[:5]):  # Show up to 5 entries as examples
+                entry_id = entry.get('id')
+                task = entry.get('task', 'Unknown')[:20]  # Truncate long task names
+                print(f"Entry {entry_id} ({task}):")
+                print(f"  Category: \"{old_category}\" → \"{new_category}\"")
+
+            if len(matching_entries) > 5:
+                print(f"... and {len(matching_entries) - 5} more entries")
+
+            # Show reason if provided
+            if args.reason:
+                print(f"\nReason for rename: {args.reason}")
+
+            print("\nNo changes will be made (preview mode).")
+            return
+
+        if args.dry_run:
+            reason_str = f" Reason: {args.reason}" if args.reason else ""
+            print(
+                f"You are about to rename category '{old_category}' to '{new_category}' for {len(matching_entries)} entries.{reason_str}")
+            print("No changes will be saved (dry-run mode).")
+            return
+
+        # Ask for confirmation
+        print(f"\nYou are about to rename category '{old_category}' to '{new_category}'.")
+        print(f"This will affect {len(matching_entries)} {'entry' if len(matching_entries) == 1 else 'entries'}.")
+
+        if not self._confirm_operation():
+            print("Category rename cancelled. No changes were made.")
+            return
+
+        # Apply changes
+        for entry in matching_entries:
+            entry['category'] = new_category
+
+        # Save changes
+        self._save_logs(entries)
+
+        # Show success message
+        reason_str = f" Reason: {args.reason}" if args.reason else ""
+        print(f"Renamed category '{old_category}' to '{new_category}' for {len(matching_entries)} entries.{reason_str}")
+
+    def _confirm_operation(self):
+        """Ask for confirmation before proceeding with an operation.
+
+        Returns:
+            True if user confirms, False otherwise
+        """
+        while True:
+            response = input("\nDo you want to proceed? (y/n): ").strip().lower()
+            if response == 'y' or response == 'yes':
+                return True
+            elif response == 'n' or response == 'no':
+                return False
+            else:
+                print("Please answer 'y' or 'n'.")
 
     def _preview_changes(self, entries, args):
         """Generate a structured preview of changes to be made.
