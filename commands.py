@@ -2453,10 +2453,10 @@ class AnalyticsCommand(Command):
                                       help='Start date for filtering (YYYY-MM-DD format)')
         parser.add_argument('--to', dest='to_date',
                                       help='End date for filtering (YYYY-MM-DD format)')
+        parser.add_argument('--top', type=int,
+                                     help='Show only top N categories by time spent')
 
     def execute(self, args):
-        """Execute the analytics command."""
-
         """Execute the analytics command."""
         # Validate date format if provided
         from_date = None
@@ -2483,9 +2483,20 @@ class AnalyticsCommand(Command):
             print(f"Error: Start date ({args.from_date}) is after end date ({args.to_date}).")
             return
 
+        # Validate top N parameter if provided
+        top_n = None
+        if hasattr(args, 'top') and args.top is not None:
+            if args.top <= 0:
+                print("Error: --top must be a positive integer.")
+                return
+            top_n = args.top
 
         # Get all time entries
         logs = self._get_logs()
+
+        if not logs:
+            print("No log entries found.")
+            return
 
         # Filter logs by date range if specified
         filtered_logs = self._filter_logs_by_date_range(logs, from_date, to_date)
@@ -2497,8 +2508,8 @@ class AnalyticsCommand(Command):
         # Calculate time spent per category
         category_times = self._calculate_time_per_category(filtered_logs)
 
-        # Display the results
-        self._display_results(category_times)
+        # Display the results, potentially limited to top N categories
+        self._display_results(category_times, top_n)
 
     def _filter_logs_by_date_range(self, logs, from_date, to_date):
         """Filter logs to include only those within the specified date range.
@@ -2535,18 +2546,6 @@ class AnalyticsCommand(Command):
 
         return filtered_logs
 
-    def _get_logs(self):
-        """Retrieve all time entries from the storage."""
-        # In a real implementation, this would load from a database or file
-        # This should be replaced with actual log loading code
-        # For example, by using a data storage service or manager
-
-        from storage import load_logs
-        logs = load_logs()
-        if not logs:
-            return []  # Replace with actual implementation
-        return logs
-
     def _calculate_time_per_category(self, logs):
         """Calculate the total time spent per category across all log entries.
 
@@ -2560,7 +2559,7 @@ class AnalyticsCommand(Command):
 
         for entry in logs:
             # Get the category (or 'uncategorized' if None)
-            category = entry['category'] if entry['category'] else "uncategorized"
+            category = entry.get('category', 'uncategorized')
 
             # Add the duration to the category total
             category_times[category] += float(entry['duration'])
@@ -2574,11 +2573,12 @@ class AnalyticsCommand(Command):
 
         return rounded_times
 
-    def _display_results(self, category_times):
-        """Display the total time spent per category.
+    def _display_results(self, category_times, top_n=None):
+        """Display the total time spent per category, optionally limited to top N categories.
 
         Args:
             category_times: Dictionary with categories as keys and total times as values
+            top_n: Optional limit to show only top N categories by time spent
         """
         print("Time spent per category:")
 
@@ -2591,6 +2591,10 @@ class AnalyticsCommand(Command):
                                    key=lambda x: x[1],
                                    reverse=True)
 
+        # Apply top_n limit if specified
+        if top_n is not None and top_n < len(sorted_categories):
+            sorted_categories = sorted_categories[:top_n]
+
         for category, hours in sorted_categories:
             # Convert hours to hours and minutes
             total_hours = int(hours)
@@ -2598,3 +2602,15 @@ class AnalyticsCommand(Command):
 
             # Format and print
             print(f"{category}: {total_hours}h {total_minutes}m")
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
