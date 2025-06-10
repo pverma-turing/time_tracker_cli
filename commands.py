@@ -16,6 +16,7 @@ a consistent user interface across the application.
 
 import argparse
 import datetime
+import io
 import json
 import os
 import sys
@@ -2463,6 +2464,9 @@ class AnalyticsCommand(Command):
                                       choices=['text', 'json'],
                                       default='text',
                                       help='Output format (text or json)')
+        parser.add_argument('--save',
+                            metavar='FILEPATH',
+                            help='Save the output to a file instead of displaying it')
 
     def execute(self, args):
         """Execute the analytics command."""
@@ -2514,6 +2518,14 @@ class AnalyticsCommand(Command):
         # Determine output format
         output_format = getattr(args, 'format', 'text')
 
+        # Check if file output is requested
+        save_filepath = getattr(args, 'save', None)
+
+        # Validate combination of format and save
+        if save_filepath and output_format != 'text':
+            self._output_error("--save can only be used with text format, not with --format json", args)
+            return
+
         # Get all time entries
         logs = self._get_logs()
 
@@ -2545,7 +2557,12 @@ class AnalyticsCommand(Command):
             if output_format == 'json':
                 self._output_daily_json(daily_times)
             else:
-                self._display_daily_text(daily_times, category_filters)
+                # If saving to file, generate the text output
+                if save_filepath:
+                    self._save_daily_text_to_file(daily_times, category_filters, save_filepath)
+                else:
+                    # Display text output to console
+                    self._display_daily_text(daily_times, category_filters)
         else:
             # Calculate time spent per category
             category_times = self._calculate_time_per_category(filtered_logs)
@@ -2558,7 +2575,12 @@ class AnalyticsCommand(Command):
             if output_format == 'json':
                 self._output_category_json(category_times)
             else:
-                self._display_category_text(category_times, category_filters)
+                # If saving to file, generate the text output
+                if save_filepath:
+                    self._save_category_text_to_file(category_times, category_filters, save_filepath)
+                else:
+                    # Display text output to console
+                    self._display_category_text(category_times, category_filters)
 
     def _output_error(self, message, args):
         """Output an error message in the appropriate format.
@@ -2836,6 +2858,110 @@ class AnalyticsCommand(Command):
 
         # Output the JSON
         print(json.dumps(result, indent=2))
+
+    def _generate_category_text(self, category_times, category_filters=None):
+        """Generate the total time spent per category as plain text.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+
+        Returns:
+            String containing the formatted text output
+        """
+        # Use StringIO to capture the output
+        output = io.StringIO()
+
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per category{header_suffix}:", file=output)
+
+        if not category_times:
+            print("No log entries found.", file=output)
+            return output.getvalue()
+
+        # Sort categories by time spent (descending)
+        sorted_categories = sorted(category_times.items(),
+                                   key=lambda x: x[1],
+                                   reverse=True)
+
+        for category, hours in sorted_categories:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{category}: {time_str}", file=output)
+
+        return output.getvalue()
+
+    def _generate_daily_text(self, daily_times, category_filters=None):
+        """Generate the total time spent per day as plain text.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+
+        Returns:
+            String containing the formatted text output
+        """
+        # Use StringIO to capture the output
+        output = io.StringIO()
+
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per day{header_suffix}:", file=output)
+
+        if not daily_times:
+            print("No log entries found.", file=output)
+            return output.getvalue()
+
+        # Sort days chronologically (ascending by date)
+        sorted_days = sorted(daily_times.items(), key=lambda x: x[0])
+
+        for date_str, hours in sorted_days:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{date_str}: {time_str}", file=output)
+
+        return output.getvalue()
+
+    def _save_category_text_to_file(self, category_times, category_filters, filepath):
+        """Save the total time spent per category as plain text to a file.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+            filepath: Path to the file where the output should be saved
+        """
+        # Generate the text output
+        text_output = self._generate_category_text(category_times, category_filters)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                f.write(text_output)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'text'}))
+
+    def _save_daily_text_to_file(self, daily_times, category_filters, filepath):
+        """Save the total time spent per day as plain text to a file.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+            filepath: Path to the file where the output should be saved
+        """
+        # Generate the text output
+        text_output = self._generate_daily_text(daily_times, category_filters)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                f.write(text_output)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'text'}))
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
