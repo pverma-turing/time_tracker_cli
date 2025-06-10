@@ -17,10 +17,11 @@ a consistent user interface across the application.
 import argparse
 import datetime
 import json
+import os
 import sys
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
-
+from datetime import datetime as dt
 from storage import load_logs
 from utils import read_config_file
 import csv
@@ -1480,7 +1481,7 @@ class EditCommand(Command):
         Returns:
             str: A concise description of the summary command's purpose.
         """
-        return "Delete logs"
+        return "Edit logs"
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
         """
@@ -1492,609 +1493,700 @@ class EditCommand(Command):
         Args:
             parser: The argument parser to add arguments to.
         """
-        parser.add_argument('--id', help='ID of the specific log entry to edit')
-        parser.add_argument('--task', help='New task description')
-        parser.add_argument('--duration', type=int, help='New duration in minutes')
-        parser.add_argument('--category', help='New category')
-        parser.add_argument('--date', help='New date in YYYY-MM-DD format')
-        parser.add_argument('--dry-run', action='store_true', help='Simulate the update without saving changes')
-        parser.add_argument('--interactive', action='store_true', help='Enter interactive mode for editing')
-        parser.add_argument('--filter-category', dest='filter_category', help='Edit all entries in this category')
-        parser.add_argument('--filter-date', dest='filter_date', help='Edit all entries on this date (YYYY-MM-DD)')
-        parser.add_argument('--filter-both', action='store_true',
-                                help='Use both category and date filters (requires --category and --date)')
-        parser.add_argument('--reason', help='Reason for making the edit (for documentation purposes)')
-        parser.add_argument('--preview', action='store_true',
-                            help='Show detailed before/after preview of changes without saving')
-        parser.add_argument('--rename-category',
-                                help='New category name when renaming categories (use with --category)')
+        filter_group = parser.add_argument_group('entry selection')
+        filter_group.add_argument('--id', type=int, help='ID of specific entry to edit')
+        filter_group.add_argument('--category', help='Edit all entries with this category')
+        filter_group.add_argument('--date', help='Edit all entries on this date (YYYY-MM-DD)')
+
+        # Update fields
+        update_group = parser.add_argument_group('fields to update')
+        update_group.add_argument('--task', help='New task description')
+        update_group.add_argument('--duration', type=int, help='New duration in minutes')
+        update_group.add_argument('--new-category', dest='new_category',
+                                  help='New category (use this to update the category)')
+        update_group.add_argument('--new-date', dest='new_date',
+                                  help='New date in YYYY-MM-DD format')
+        update_group.add_argument('--rename-category', dest='rename_category',
+                                  help='Rename a category across multiple entries (use with --category)')
+
+        # Batch import
+        batch_group = parser.add_argument_group('batch operations')
+        batch_group.add_argument('--import-csv', metavar='FILE',
+                                 help='Import edits from a CSV file with id column and update fields')
+
+        # Mode flags
+        mode_group = parser.add_argument_group('operation mode')
+        mode_group.add_argument('--dry-run', action='store_true',
+                                help='Simulate the update without modifying data')
+        mode_group.add_argument('--preview', action='store_true',
+                                help='Show a detailed preview of changes without modifying data')
+        mode_group.add_argument('--interactive', action='store_true',
+                                help='Enter interactive mode for guided editing (only for single entry)')
+        mode_group.add_argument('--reason', help='Document the reason for making this edit')
 
     def execute(self, args):
         """Execute the edit command with the given arguments."""
-        # Get all entries
-        entries = self._get_logs()
+        # Validate arguments
+        self._validate_arguments(args)
 
-        # Handle category rename mode
+        # Handle CSV import if requested
+        if args.import_csv is not None:
+            self._handle_csv_import(args)
+            return
+
+        # Handle category rename operation if requested
         if args.rename_category is not None:
-            # Validate that only --category is used with --rename-category
-            if args.task is not None or args.duration is not None or args.date is not None:
-                print("Error: --rename-category can only be used with --category.")
-                return
-            if args.category is None:
-                print("Error: --rename-category requires --category to specify the old category name.")
-                return
-
-            if args.interactive:
-                print("Error: --rename-category cannot be used with --interactive.")
-                return
-
-                # Process category renaming
-            self._rename_category(args, entries)
+            self._handle_category_rename(args)
             return
 
-        # Check if preview and interactive are used together (not allowed)
-        if args.preview and args.interactive:
-            print("Error: --preview cannot be used with --interactive.")
-            return
+        # Get all time entries
+        logs = self._get_logs()
 
-        # Check if update fields are provided, or if we should enter interactive mode
-        update_fields = [args.task, args.duration, args.category, args.date]
-        use_interactive = args.interactive and not any(field is not None for field in update_fields)
+        # Find entries to edit based on filters
+        entries_to_edit = self._find_entries_to_edit(logs, args)
 
-        # If no update fields provided and not in interactive mode, show error
-        if not any(field is not None for field in update_fields) and not use_interactive:
-            print(
-                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
-            return
-
-        # Validate that filter-both has both category and date
-        if args.filter_both and (args.category is None or args.date is None):
-            print("Error: When using --filter-both, you must provide both --category and --date for filtering.")
-            return
-
-        # Determine if we're in bulk edit mode or single entry mode
-        if args.id is not None:
-            # Single entry mode
-            self._edit_single_entry(args, entries, use_interactive)
-        else:
-            # Bulk edit mode
-            self._edit_multiple_entries(args, entries, use_interactive)
-
-    def _edit_single_entry(self, args, entries, use_interactive):
-        """Edit a single entry by ID.
-
-        Args:
-            args: Command line arguments
-            entries: List of all entries
-            use_interactive: Whether to use interactive mode
-        """
-        # Find the entry with the specified ID
-        entry_index = None
-        for i, entry in enumerate(entries):
-            if entry.get('id') == int(args.id):
-                entry_index = i
-                break
-
-        if entry_index is None:
-            print(f"No entry found with ID {args.id}.")
-            return
-
-        # Get the entry to edit
-        original_entry = entries[entry_index]
-
-        # Handle preview mode
-        if args.preview:
-            # Pass a single-element list with the entry to the preview method
-            self._preview_changes([original_entry], args)
-            return
-
-        # Make a copy of the entry to avoid modifying the original in dry-run mode or during interactive collection
-        entry = original_entry.copy()
-        changes = []
-        dry_run_changes = []
-
-        # Handle interactive mode
-        if use_interactive:
-            self._process_interactive_mode(entry, changes, dry_run_changes, args.dry_run)
-        else:
-            # Update fields based on provided arguments
-            self._process_command_line_args(args, entry, changes, dry_run_changes)
-
-        # Handle dry run mode
-        if args.dry_run:
-            if dry_run_changes:
-                reason_str = f" Reason: {args.reason}" if args.reason else ""
-                print(
-                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}.{reason_str} No changes will be saved (dry-run mode).")
+        # Handle case when no entries found
+        if not entries_to_edit:
+            if args.preview:
+                print("No entries found for the given filters.")
             else:
-                print(f"No changes would be made to entry {args.id}. (dry-run mode)")
+                self._print_no_entries_message(args)
             return
 
-        # Apply changes to the original entry if we have changes
-        if changes:
-            # For interactive mode, ask for confirmation before saving
-            if use_interactive and not self._confirm_changes(args.id, changes):
-                print("Update cancelled. No changes were made.")
+        # If preview mode is enabled, show the detailed preview and exit
+        if args.preview:
+            self._show_preview(entries_to_edit, args)
+            return
+
+        # Multi-entry mode vs single-entry mode
+        if args.id is not None:
+            # Single entry edit mode
+            self._handle_single_entry_edit(entries_to_edit[0], args, logs)
+        else:
+            # Multi-entry edit mode
+            self._handle_multi_entry_edit(entries_to_edit, args, logs)
+
+    def _validate_arguments(self, args):
+        """Validate command arguments for consistency."""
+        # CSV import specific validation
+        if args.import_csv is not None:
+            # Check if any other filter or update flags are used with import-csv
+            other_flags = []
+            if args.id is not None:
+                other_flags.append("--id")
+            if args.category is not None:
+                other_flags.append("--category")
+            if args.date is not None:
+                other_flags.append("--date")
+            if args.task is not None:
+                other_flags.append("--task")
+            if args.duration is not None:
+                other_flags.append("--duration")
+            if args.new_category is not None:
+                other_flags.append("--new-category")
+            if args.new_date is not None:
+                other_flags.append("--new-date")
+            if args.rename_category is not None:
+                other_flags.append("--rename-category")
+
+            if other_flags:
+                raise ValueError(
+                    f"--import-csv cannot be used with other update or filter flags: {', '.join(other_flags)}.")
+
+            # Check if the CSV file exists
+            if not os.path.exists(args.import_csv):
+                raise ValueError(f"CSV file not found: {args.import_csv}")
+
+            # We can return early since we've validated the import-csv operation
+            return
+
+        # Category rename specific validation
+        if args.rename_category is not None:
+            if args.category is None:
+                raise ValueError("--rename-category can only be used with --category.")
+
+            # Check if any other update or filter flags are used with rename-category
+            invalid_combinations = []
+            if args.id is not None:
+                invalid_combinations.append("--id")
+            if args.date is not None:
+                invalid_combinations.append("--date")
+            if args.task is not None:
+                invalid_combinations.append("--task")
+            if args.duration is not None:
+                invalid_combinations.append("--duration")
+            if args.new_category is not None:
+                invalid_combinations.append("--new-category")
+            if args.new_date is not None:
+                invalid_combinations.append("--new-date")
+
+            if invalid_combinations:
+                raise ValueError(f"--rename-category cannot be combined with {', '.join(invalid_combinations)}.")
+
+            # We can return early since we've validated the rename-category operation
+            return
+
+        # Standard validation for other operations
+        # Check if both ID and category/date filters are provided
+        if args.id is not None and (args.category is not None or args.date is not None):
+            raise ValueError(
+                "Cannot combine --id with --category or --date. Use either --id for a single entry or --category/--date for multiple entries.")
+
+        # Check if at least one filter is provided
+        if args.id is None and args.category is None and args.date is None:
+            raise ValueError("You must provide at least one filter: --id, --category, or --date.")
+
+        # Check if at least one update field is provided
+        update_fields = [args.task, args.duration, args.new_category, args.new_date]
+        if all(field is None for field in update_fields):
+            raise ValueError(
+                "At least one field (--task, --duration, --new-category, or --new-date) must be specified for editing.")
+
+        # Interactive mode can only be used with --id
+        if args.interactive and args.id is None:
+            raise ValueError("Interactive mode (--interactive) can only be used when editing a single entry with --id.")
+
+        # Preview cannot be combined with interactive mode
+        if args.preview and args.interactive:
+            raise ValueError("--preview cannot be used with --interactive.")
+
+        # Validate date format if provided
+        if args.date is not None:
+            try:
+                dt.strptime(args.date, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError("Invalid date format for --date. Please use YYYY-MM-DD format.")
+
+        if args.new_date is not None:
+            try:
+                dt.strptime(args.new_date, "%Y-%m-%d")
+            except ValueError:
+                raise ValueError("Invalid date format for --new-date. Please use YYYY-MM-DD format.")
+
+    def _handle_csv_import(self, args):
+        """Process a CSV file and apply edits to entries."""
+        csv_file = args.import_csv
+
+        try:
+            # Get all logs
+            logs = self._get_logs()
+
+            # Track results
+            successful_updates = 0
+            skipped_entries = 0
+            skipped_ids = []
+
+            # Prepare for preview if needed
+            preview_changes = []
+
+            # Open and process the CSV file
+            with open(csv_file, 'r', newline='') as csvfile:
+                # Attempt to detect dialect/format
+                try:
+                    dialect = csv.Sniffer().sniff(csvfile.read(1024))
+                    csvfile.seek(0)
+                except csv.Error:
+                    dialect = 'excel'  # Default to standard CSV format
+                    csvfile.seek(0)
+
+                reader = csv.DictReader(csvfile, dialect=dialect)
+
+                # Validate headers
+                headers = reader.fieldnames
+                if not headers:
+                    raise ValueError("CSV file is empty or has no headers")
+
+                # Ensure id column exists
+                if 'id' not in headers:
+                    raise ValueError("CSV file must contain an 'id' column")
+
+                # Validate that at least one editable field exists
+                editable_fields = ['task', 'duration', 'category', 'date']
+                if not any(field in headers for field in editable_fields):
+                    raise ValueError(
+                        "CSV file must contain at least one editable field (task, duration, category, date)")
+
+                # Process each row
+                for row_num, row in enumerate(reader, start=2):  # Start at 2 to account for header row
+                    try:
+                        # Get the ID and ensure it's valid
+                        try:
+                            entry_id = int(row['id'])
+                        except (ValueError, TypeError):
+                            print(f"Warning: Skipping row {row_num} - Invalid ID format: {row.get('id', 'missing')}")
+                            skipped_entries += 1
+                            continue
+
+                        # Find the entry with this ID
+                        try:
+                            entry_index = next(i for i, log in enumerate(logs) if i + 1 == entry_id)
+                            entry = logs[entry_index]
+                        except StopIteration:
+                            print(f"Warning: Skipping row {row_num} - No entry found with ID: {entry_id}")
+                            skipped_entries += 1
+                            skipped_ids.append(entry_id)
+                            continue
+
+                        # Prepare updates for this entry
+                        updates = {}
+                        changes = []
+
+                        # Process each editable field
+                        if 'task' in headers and row['task']:
+                            updates['task'] = row['task']
+                            changes.append(f"task from '{entry['task']}' to '{row['task']}'")
+
+                        if 'duration' in headers and row['duration']:
+                            try:
+                                duration = int(row['duration'])
+                                if duration <= 0:
+                                    print(
+                                        f"Warning: Row {row_num} - Invalid duration (must be positive): {row['duration']}")
+                                    continue
+                                updates['duration'] = duration
+                                changes.append(f"duration from {entry['duration']} to {duration}")
+                            except (ValueError, TypeError):
+                                print(f"Warning: Row {row_num} - Invalid duration format: {row['duration']}")
+                                continue
+
+                        if 'category' in headers and row['category']:
+                            updates['category'] = row['category']
+                            old_category = entry.get('category', "(none)")
+                            changes.append(f"category from '{old_category}' to '{row['category']}'")
+
+                        if 'date' in headers and row['date']:
+                            try:
+                                # Validate date format
+                                dt.strptime(row['date'], "%Y-%m-%d")
+                                updates['date'] = row['date']
+                                changes.append(f"date from {entry['date']} to {row['date']}")
+                            except ValueError:
+                                print(f"Warning: Row {row_num} - Invalid date format: {row['date']}")
+                                continue
+
+                        # If no valid updates found, skip this row
+                        if not updates:
+                            print(f"Warning: Skipping row {row_num} - No valid updates specified")
+                            skipped_entries += 1
+                            continue
+
+                        # If in preview or dry-run mode, just store changes
+                        if args.preview or args.dry_run:
+                            preview_changes.append((entry_id, entry, updates, changes))
+                        else:
+                            # Apply updates
+                            self._apply_updates_to_entry(entry, updates)
+                            successful_updates += 1
+
+                    except Exception as e:
+                        print(f"Warning: Error processing row {row_num}: {str(e)}")
+                        skipped_entries += 1
+                        continue
+
+            # Handle preview mode
+            if args.preview:
+                print(f"Previewing changes from CSV import ({len(preview_changes)} entries):")
+                for entry_id, entry, updates, _ in preview_changes:
+                    print(f"Entry {entry_id}:")
+                    if 'task' in updates:
+                        print(f"  Task: \"{entry['task']}\" → \"{updates['task']}\"")
+                    if 'duration' in updates:
+                        print(f"  Duration: {entry['duration']} → {updates['duration']}")
+                    if 'category' in updates:
+                        old_category = entry.get('category',"(none)")
+                        print(f"  Category: \"{old_category}\" → \"{updates['category']}\"")
+                    if 'date' in updates:
+                        print(f"  Date: {entry['date']} → {updates['date']}")
+                print("No changes will be made (preview mode).")
                 return
 
-            # Apply all collected changes to the original entry
-            for key, value in entry.items():
-                if key != 'id' and original_entry.get(key) != value:
-                    original_entry[key] = value
+            # Handle dry run mode
+            if args.dry_run:
+                print(f"This would update {len(preview_changes)} entries and skip {skipped_entries} entries.")
+                if skipped_ids:
+                    print(f"Skipped IDs: {', '.join(map(str, skipped_ids))}")
+                print("No changes will be saved (dry-run mode).")
+                return
 
-            # Save the updated entries
-            self._save_logs(entries)
+            # Save changes
+            if successful_updates > 0:
+                self._save_logs(logs)
 
-            # Display reason if provided
-            reason_str = f" Reason: {args.reason}" if args.reason else ""
-            print(f"Updated entry {args.id}: {', '.join(changes)}.{reason_str}")
-        else:
-            print(f"No changes made to entry {args.id}.")
+            # Print summary
+            print(f"CSV import completed: {successful_updates} entries updated, {skipped_entries} entries skipped.")
+            if skipped_ids:
+                print(f"Skipped IDs: {', '.join(map(str, skipped_ids))}")
 
-    def _edit_multiple_entries(self, args, entries, use_interactive):
-        """Edit multiple entries based on filters.
+        except Exception as e:
+            # Handle any errors in CSV processing
+            raise ValueError(f"Error processing CSV file: {str(e)}")
 
-        Args:
-            args: Command line arguments
-            entries: List of all entries
-            use_interactive: Whether to use interactive mode
-        """
-        # Find entries matching the filters
-        matching_entries = self._find_matching_entries(args, entries)
-
-        if not matching_entries:
-            filter_desc = self._get_filter_description(args)
-            print(f"No entries found matching {filter_desc}.")
-            return
-
-        # Handle preview mode
-        if args.preview:
-            self._preview_changes(matching_entries, args)
-            return
-
-        # Create a template of changes to apply to all matching entries
-        template_changes = {}
-        changes_description = []
-        dry_run_description = []
-
-        # Process command line arguments to build the template
-        if args.task is not None:
-            template_changes['task'] = args.task
-            changes_description.append(f"task set to '{args.task}'")
-            dry_run_description.append(f"set task to '{args.task}'")
-
-        if args.duration is not None:
-            template_changes['duration'] = args.duration
-            changes_description.append(f"duration set to {args.duration} minutes")
-            dry_run_description.append(f"set duration to {args.duration}")
-
-        if args.category is not None:
-            template_changes['category'] = args.category
-            changes_description.append(f"category set to '{args.category}'")
-            dry_run_description.append(f"set category to '{args.category}'")
-
-        if args.date is not None:
-            template_changes['date'] = args.date
-            changes_description.append(f"date set to {args.date}")
-            dry_run_description.append(f"set date to {args.date}")
-
-        # Handle dry run mode
-        if args.dry_run:
-            filter_desc = self._get_filter_description(args)
-            reason_str = f"\nReason: {args.reason}" if args.reason else ""
-            print(f"You are about to update {len(matching_entries)} entries matching {filter_desc}:")
-            print(f"Changes to apply: {', '.join(dry_run_description)}{reason_str}")
-            print("No changes will be saved (dry-run mode).")
-            return
-
-        # Ask for confirmation before making bulk changes
-        if not self._confirm_bulk_edit(matching_entries, changes_description, args.reason):
-            print("Bulk update cancelled. No changes were made.")
-            return
-
-        # Apply changes to all matching entries
-        updated_count = 0
-        for entry in matching_entries:
-            original_values = {}
-            has_changes = False
-
-            # Check if the changes would actually modify this entry
-            for key, value in template_changes.items():
-                if entry.get(key) != value:
-                    original_values[key] = entry.get(key)
-                    entry[key] = value
-                    has_changes = True
-
-            # Only count entries that actually changed
-            if has_changes:
-                updated_count += 1
-
-        # Save the updated entries
-        self._save_logs(entries)
-
-        # Report results
-        if updated_count > 0:
-            reason_str = f" Reason: {args.reason}" if args.reason else ""
-            print(f"Successfully updated {updated_count} entries: {', '.join(changes_description)}.{reason_str}")
-        else:
-            print("No changes were made to any entries. All values were already set to the requested values.")
-
-    def _find_matching_entries(self, args, entries):
-        """Find entries matching the filter criteria.
-
-        Args:
-            args: Command line arguments
-            entries: List of all entries
-
-        Returns:
-            List of matching entries
-        """
-        matching_entries = []
-
-        if args.filter_category:
-            # Filter by category only
-            for entry in entries:
-                if entry.get('category') == args.filter_category:
-                    matching_entries.append(entry)
-        elif args.filter_date:
-            # Filter by date only
-            for entry in entries:
-                if entry.get('date') == args.filter_date:
-                    matching_entries.append(entry)
-        elif args.filter_both:
-            # Filter by both category and date
-            for entry in entries:
-                if entry.get('category') == args.category and entry.get('date') == args.date:
-                    matching_entries.append(entry)
-
-        return matching_entries
-
-    def _get_filter_description(self, args):
-        """Get a human-readable description of the filter.
-
-        Args:
-            args: Command line arguments
-
-        Returns:
-            String describing the filter
-        """
-        if args.filter_category:
-            return f"category '{args.filter_category}'"
-        elif args.filter_date:
-            return f"date '{args.filter_date}'"
-        elif args.filter_both:
-            return f"category '{args.category}' and date '{args.date}'"
-        return "filters"
-
-    def _rename_category(self, args, entries):
-        """Rename a category across all matching entries.
-
-        Args:
-            args: Command line arguments
-            entries: List of all entries
-        """
+    def _handle_category_rename(self, args):
+        """Handle renaming a category across multiple entries."""
         old_category = args.category
         new_category = args.rename_category
 
-        # Find entries with the specified category
-        matching_entries = []
-        for entry in entries:
-            if entry.get('category') == old_category:
-                matching_entries.append(entry)
+        # Get all time entries
+        logs = self._get_logs()
 
-        if not matching_entries:
+        # Find entries with the old category
+        matching_entries = [log for log in logs if log['category'] == old_category]
+        entry_count = len(matching_entries)
+
+        # Handle case when no entries match
+        if entry_count == 0:
             print(f"No entries found with category '{old_category}'.")
             return
 
-        # Handle preview or dry-run mode
-        if args.preview:
-            print(f"Previewing category rename from '{old_category}' to '{new_category}':")
-            print(
-                f"Found {len(matching_entries)} {'entry' if len(matching_entries) == 1 else 'entries'} with category '{old_category}'")
+        # Show summary of what will be changed
+        print(f"Found {entry_count} entries with category '{old_category}'.")
+        message = f"Will rename category from '{old_category}' to '{new_category}'"
+        if args.reason:
+            message += f" (Reason: {args.reason})"
+        print(message)
 
-            for i, entry in enumerate(matching_entries[:5]):  # Show up to 5 entries as examples
-                entry_id = entry.get('id')
-                task = entry.get('task', 'Unknown')[:20]  # Truncate long task names
-                print(f"Entry {entry_id} ({task}):")
-                print(f"  Category: \"{old_category}\" → \"{new_category}\"")
-
-            if len(matching_entries) > 5:
-                print(f"... and {len(matching_entries) - 5} more entries")
-
-            # Show reason if provided
-            if args.reason:
-                print(f"\nReason for rename: {args.reason}")
-
-            print("\nNo changes will be made (preview mode).")
+        # If it's a dry run or preview, just show what would happen and exit
+        if args.dry_run:
+            print(f"This would rename the category for {entry_count} entries. No changes will be saved (dry-run mode).")
             return
 
-        if args.dry_run:
-            reason_str = f" Reason: {args.reason}" if args.reason else ""
-            print(
-                f"You are about to rename category '{old_category}' to '{new_category}' for {len(matching_entries)} entries.{reason_str}")
-            print("No changes will be saved (dry-run mode).")
+        if args.preview:
+            print(f"Previewing category rename for {entry_count} entries:")
+            for i, entry in enumerate(matching_entries):
+                print(f"Entry {i + 1}:")
+                print(f"  Category: \"{entry['category']}\" → \"{new_category}\"")
+            print("No changes will be made (preview mode).")
             return
 
         # Ask for confirmation
-        print(f"\nYou are about to rename category '{old_category}' to '{new_category}'.")
-        print(f"This will affect {len(matching_entries)} {'entry' if len(matching_entries) == 1 else 'entries'}.")
-
-        if not self._confirm_operation():
-            print("Category rename cancelled. No changes were made.")
+        confirm = input(
+            f"Rename category '{old_category}' to '{new_category}' for {entry_count} entries? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Operation canceled.")
             return
 
-        # Apply changes
+        # Apply category rename to all matching entries
         for entry in matching_entries:
             entry['category'] = new_category
 
-        # Save changes
-        self._save_logs(entries)
+        # Save the updated logs
+        self._save_logs(logs)
 
-        # Show success message
-        reason_str = f" Reason: {args.reason}" if args.reason else ""
-        print(f"Renamed category '{old_category}' to '{new_category}' for {len(matching_entries)} entries.{reason_str}")
+        # Print success message
+        message = f"Renamed category '{old_category}' to '{new_category}' for {entry_count} entries."
+        if args.reason:
+            message += f" Reason: {args.reason}"
+        print(message)
 
-    def _confirm_operation(self):
-        """Ask for confirmation before proceeding with an operation.
+    def _find_entries_to_edit(self, logs, args):
+        """Find entries that match the given filters."""
+        if args.id is not None:
+            # Find entry by ID
+            try:
+                entry = next(log for i, log in enumerate(logs) if i + 1 == args.id)
+                return [entry]
+            except StopIteration:
+                return []
+        else:
+            # Find entries by category and/or date
+            matching_entries = logs
 
-        Returns:
-            True if user confirms, False otherwise
-        """
-        while True:
-            response = input("\nDo you want to proceed? (y/n): ").strip().lower()
-            if response == 'y' or response == 'yes':
-                return True
-            elif response == 'n' or response == 'no':
-                return False
-            else:
-                print("Please answer 'y' or 'n'.")
+            if args.category is not None:
+                matching_entries = [log for log in matching_entries
+                                    if log['category'] == args.category]
 
-    def _preview_changes(self, entries, args):
-        """Generate a structured preview of changes to be made.
+            if args.date is not None:
+                matching_entries = [log for log in matching_entries
+                                    if log['date'] == args.date]
 
-        Args:
-            entries: List of entries to be modified
-            args: Command line arguments with field values
-        """
-        if not entries:
-            print("No entries found for the given filters.")
-            return
+            return matching_entries
 
-        print(f"Previewing changes to {len(entries)} {'entry' if len(entries) == 1 else 'entries'}:")
+    def _print_no_entries_message(self, args):
+        """Print appropriate message when no entries match the filters."""
+        if args.id is not None:
+            print(f"No entry found with ID {args.id}.")
+        else:
+            conditions = []
+            if args.category is not None:
+                conditions.append(f"category '{args.category}'")
+            if args.date is not None:
+                conditions.append(f"date '{args.date}'")
 
+            print(f"No entries found matching {' and '.join(conditions)}.")
+
+    def _show_preview(self, entries, args):
+        """Show a detailed preview of changes that would be applied."""
+        entry_count = len(entries)
+
+        # Collect updates to apply
+        updates = {}
+        if args.task is not None:
+            updates['task'] = args.task
+        if args.duration is not None:
+            updates['duration'] = args.duration
+        if args.new_category is not None:
+            updates['category'] = args.new_category
+        if args.new_date is not None:
+            updates['date'] = args.new_date
+
+        # Display preview header
+        if entry_count == 1:
+            print(f"Previewing changes to 1 entry:")
+        else:
+            print(f"Previewing changes to {entry_count} entries:")
+
+        # Display changes for each entry
         for i, entry in enumerate(entries):
+            # For multi-entry preview, show entry numbers/IDs
+            if entry_count > 1:
+                print(f"Entry {i + 1}:")
+            else:
+                print(f"Entry {args.id}:")
+
+            # Show each field that would change
+            changes_shown = False
+
+            if 'task' in updates:
+                print(f"  Task: \"{entry['task']}\" → \"{updates['task']}\"")
+                changes_shown = True
+
+            if 'duration' in updates:
+                print(f"  Duration: {entry['duration']} → {updates['duration']}")
+                changes_shown = True
+
+            if 'category' in updates:
+                old_category = entry.get('category',"(none)")
+                print(f"  Category: \"{old_category}\" → \"{updates['category']}\"")
+                changes_shown = True
+
+            if 'date' in updates:
+                print(f"  Date: {entry['date']} → {updates['date']}")
+                changes_shown = True
+
+            # If no changes would be made to this entry, indicate that
+            if not changes_shown:
+                print("  No changes would be applied to this entry.")
+
+        # Reason display if provided
+        if args.reason:
+            print(f"Reason for changes: {args.reason}")
+
+        # Final message
+        print("No changes will be made (preview mode).")
+
+    def _handle_single_entry_edit(self, entry, args, logs):
+        """Handle editing of a single entry."""
+        # Check if explicitly provided update fields exist
+        update_fields_provided = any(field is not None for field in
+                                     [args.task, args.duration, args.new_category, args.new_date])
+
+        # Enter interactive mode if requested and no specific update fields were provided
+        if args.interactive and not update_fields_provided:
+            changes = self._run_interactive_mode(entry, args.dry_run, args.reason)
+            if not changes:  # User canceled the operation
+                return
+        else:
+            # Regular update mode (non-interactive)
+            updates = {}
             changes = []
 
-            # Check each field for changes
-            if args.task is not None and args.task != entry.get('task'):
-                changes.append(f"  Task: \"{entry.get('task', '')}\" → \"{args.task}\"")
+            # Collect changes for task
+            if args.task is not None:
+                updates['task'] = args.task
+                changes.append(f"task changed from '{entry['task']}' to '{args.task}'")
 
-            if args.duration is not None and args.duration != entry.get('duration'):
-                changes.append(f"  Duration: {entry.get('duration', '')} → {args.duration}")
+            # Collect changes for duration
+            if args.duration is not None:
+                updates['duration'] = args.duration
+                changes.append(f"duration changed from {entry['duration']} to {args.duration} minutes")
 
-            if args.category is not None and args.category != entry.get('category'):
-                old_category = entry.get('category', 'None')
-                if old_category == 'None':
-                    old_category = "None"
-                changes.append(f"  Category: \"{old_category}\" → \"{args.category}\"")
+            # Collect changes for category
+            if args.new_category is not None:
+                updates['category'] = args.new_category
+                old_category = entry.get('category', "(none)")
+                changes.append(f"category changed from '{old_category}' to '{args.new_category}'")
 
-            if args.date is not None and args.date != entry.get('date'):
-                changes.append(f"  Date: {entry.get('date', '')} → {args.date}")
+            # Collect changes for date
+            if args.new_date is not None:
+                updates['date'] = args.new_date
+                changes.append(f"date changed from {entry['date']} to {args.new_date}")
 
-            # Only show entries that would actually change
-            if changes:
-                entry_id = entry.get('id', i + 1)
-                task_name = entry.get('task', 'Unknown')[:20]  # Truncate long task names
-                print(f"Entry {entry_id} ({task_name}):")
-                for change in changes:
-                    print(change)
+            # If it's a dry run, just display the changes without updating
+            if args.dry_run:
+                message = f"You are about to update entry {entry['id']}: {', '.join(changes)}. No changes will be saved (dry-run mode)."
+                if args.reason:
+                    message += f" Reason: {args.reason}"
+                print(message)
+                return
 
-        # Show reason if provided
+            # Apply changes
+            self._apply_updates_to_entry(entry, updates)
+
+        # If we got here and no changes were collected, there's nothing to do
+        if not changes:
+            print("No changes were made.")
+            return
+
+        # Save the updated logs
+        if not args.dry_run:
+            self._save_logs(logs)
+            # Print summary of changes
+            message = f"Updated entry {entry.id}: {', '.join(changes)}."
+            if args.reason:
+                message += f" Reason: {args.reason}"
+            print(message)
+
+    def _handle_multi_entry_edit(self, entries, args, logs):
+        """Handle editing of multiple entries."""
+        entry_count = len(entries)
+
+        # Collect updates to apply
+        updates = {}
+        if args.task is not None:
+            updates['task'] = args.task
+        if args.duration is not None:
+            updates['duration'] = args.duration
+        if args.new_category is not None:
+            updates['category'] = args.new_category
+        if args.new_date is not None:
+            updates['date'] = args.new_date
+
+        # Prepare summary of changes for display
+        changes_summary = []
+        if 'task' in updates:
+            changes_summary.append(f"task to '{updates['task']}'")
+        if 'duration' in updates:
+            changes_summary.append(f"duration to {updates['duration']} minutes")
+        if 'category' in updates:
+            changes_summary.append(f"category to '{updates['category']}'")
+        if 'date' in updates:
+            changes_summary.append(f"date to '{updates['date']}'")
+
+        # Show what will be changed
+        print(f"Found {entry_count} entries matching the criteria.")
+        message = f"The following fields will be updated: {', '.join(changes_summary)}"
         if args.reason:
-            print(f"\nReason for changes: {args.reason}")
+            message += f" (Reason: {args.reason})"
+        print(message)
 
-        print("\nNo changes will be made (preview mode).")
+        # If it's a dry run, just show what would happen
+        if args.dry_run:
+            print(f"This would update {entry_count} entries. No changes will be saved (dry-run mode).")
+            return
 
-    def _confirm_bulk_edit(self, entries, changes, reason=None):
-        """Ask for confirmation before bulk editing.
+        # Ask for confirmation
+        confirm = input(f"Update {entry_count} entries? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Operation canceled.")
+            return
 
-        Args:
-            entries: The entries that will be edited
-            changes: Description of changes to make
+        # Apply updates to all matching entries
+        for entry in entries:
+            self._apply_updates_to_entry(entry, updates)
 
-        Returns:
-            True if user confirms, False otherwise
-        """
-        print(f"\nYou are about to update {len(entries)} entries with the following changes:")
+        # Save the updated logs
+        self._save_logs(logs)
+
+        # Print summary
+        message = f"Successfully updated {entry_count} entries."
+        if args.reason:
+            message += f" Reason: {args.reason}"
+        print(message)
+
+    def _apply_updates_to_entry(self, entry, updates):
+        """Apply the given updates to an entry."""
+        if 'task' in updates:
+            entry['task'] = updates['task']
+        if 'duration' in updates:
+            entry['duration'] = updates['duration']
+        if 'category' in updates:
+            entry['category'] = updates['category']
+        if 'date' in updates:
+            entry['date'] = updates['date']
+
+    def _run_interactive_mode(self, entry, dry_run=False, reason=None):
+        """Run interactive mode for editing an entry."""
+        print(f"\nInteractive edit mode for entry {entry.id}")
+        if reason:
+            print(f"Reason for edit: {reason}")
+        print(f"Current values:")
+        print(f"  Task: {entry['task']}")
+        print(f"  Duration: {entry['duration']} minutes")
+        print(f"  Category: {entry.get('category', '(none)')}")
+        print(f"  Date: {entry['date']}")
+        print("\nEnter new values (leave blank to keep current value)")
+
+        # Collect changes
+        changes = []
+        updates = {}
+
+        # Task prompt
+        new_task = input(f"Task [{entry['task']}]: ").strip()
+        if new_task:
+            updates['task'] = new_task
+            changes.append(f"task changed from '{entry['task']}' to '{new_task}'")
+
+        # Duration prompt
+        while True:
+            new_duration = input(f"Duration in minutes [{entry['duration']}]: ").strip()
+            if not new_duration:
+                break
+            try:
+                new_duration = int(new_duration)
+                if new_duration <= 0:
+                    print("Duration must be a positive number.")
+                    continue
+                updates['duration'] = new_duration
+                changes.append(f"duration changed from {entry['duration']} to {new_duration} minutes")
+                break
+            except ValueError:
+                print("Please enter a valid number for duration.")
+
+        # Category prompt
+        new_category = input(f"Category [{entry.get('category', '(none)')}]: ").strip()
+        if new_category:
+            updates['category'] = new_category
+            old_category = entry.get('category', '(none)')
+            changes.append(f"category changed from '{old_category}' to '{new_category}'")
+
+        # Date prompt
+        while True:
+            new_date = input(f"Date (YYYY-MM-DD) [{entry['date']}]: ").strip()
+            if not new_date:
+                break
+            try:
+                dt.strptime(new_date, "%Y-%m-%d")
+                updates['date'] = new_date
+                changes.append(f"date changed from {entry['date']} to {new_date}")
+                break
+            except ValueError:
+                print("Invalid date format. Please use YYYY-MM-DD format.")
+
+        # If no changes were made
+        if not changes:
+            print("No changes were specified.")
+            return []
+
+        # Ask for confirmation
+        print("\nSummary of changes:")
         for change in changes:
             print(f"- {change}")
 
         if reason:
-            print(f"\nReason: {reason}")
+            print(f"Reason: {reason}")
 
-        print("\nMatching entries:")
-        print(f"{'ID':<5} {'Date':<12} {'Task':<20} {'Duration':<10} {'Category':<15}")
-        print("-" * 65)
+        if dry_run:
+            print("\nNo changes will be saved (dry-run mode).")
+            return changes
 
-        # Show sample of entries (limited to first 5 for readability)
-        display_count = min(5, len(entries))
-        for i in range(display_count):
-            entry = entries[i]
-            print(
-                f"{entry.get('id', 'N/A'):<5} {entry.get('date', 'N/A'):<12} {entry.get('task', 'N/A')[:20]:<20} {entry.get('duration', 'N/A'):<10} {entry.get('category', 'N/A'):<15}")
+        confirm = input("\nApply these changes? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Operation canceled.")
+            return []
 
-        if len(entries) > display_count:
-            print(f"... and {len(entries) - display_count} more entries")
-
-        while True:
-            response = input("\nDo you want to apply these changes to all matching entries? (y/n): ").strip().lower()
-            if response == 'y' or response == 'yes':
-                return True
-            elif response == 'n' or response == 'no':
-                return False
-            else:
-                print("Please answer 'y' or 'n'.")
-
-    def _process_command_line_args(self, args, entry, changes, dry_run_changes):
-        """Process updates from command line arguments.
-
-        Args:
-            args: Command line arguments.
-            entry: The entry being edited.
-            changes: List to collect change descriptions.
-            dry_run_changes: List to collect dry-run friendly descriptions.
-        """
-        if args.task is not None and args.task != entry['task']:
-            old_task = entry['task']
-            entry['task'] = args.task
-            changes.append(f"task changed from '{old_task}' to '{args.task}'")
-            dry_run_changes.append(f"change task to '{args.task}'")
-
-        if args.duration is not None and args.duration != entry['duration']:
-            old_duration = entry['duration']
-            entry['duration'] = args.duration
-            changes.append(f"duration changed from {old_duration} to {args.duration} minutes")
-            dry_run_changes.append(f"duration to {args.duration}")
-
-        if args.category is not None and args.category != entry.get('category'):
-            old_category = entry.get('category', 'None')
-            entry['category'] = args.category
-            if old_category == 'None':
-                changes.append(f"category updated to '{args.category}'")
-                dry_run_changes.append(f"add category '{args.category}'")
-            else:
-                changes.append(f"category changed from '{old_category}' to '{args.category}'")
-                dry_run_changes.append(f"change category to '{args.category}'")
-
-        if args.date is not None and args.date != entry['date']:
-            old_date = entry['date']
-            entry['date'] = args.date
-            changes.append(f"date changed from {old_date} to {args.date}")
-            dry_run_changes.append(f"date to {args.date}")
-
-    def _process_interactive_mode(self, entry, changes, dry_run_changes, is_dry_run=False):
-        """Process updates in interactive mode.
-
-        Args:
-            entry: The entry being edited.
-            changes: List to collect change descriptions.
-            dry_run_changes: List to collect dry-run friendly descriptions.
-            is_dry_run: Whether this is a dry run.
-        """
-        print(f"\nEditing entry {entry['id']} in interactive mode:")
-        print(f"Current values: Task: '{entry['task']}', Duration: {entry['duration']} minutes, "
-              f"Category: '{entry.get('category', 'None')}', Date: {entry['date']}")
-        print("For each field, enter a new value or press Enter to keep the current value.\n")
-
-        # Task
-        new_task = self._prompt_for_field("Task", entry['task'])
-        if new_task is not None and new_task != entry['task']:
-            old_task = entry['task']
-            entry['task'] = new_task
-            changes.append(f"task changed from '{old_task}' to '{new_task}'")
-            dry_run_changes.append(f"change task to '{new_task}'")
-
-        # Duration
-        new_duration_str = self._prompt_for_field("Duration (minutes)", str(entry['duration']))
-        if new_duration_str is not None:
-            try:
-                new_duration = int(new_duration_str)
-                if new_duration != entry['duration']:
-                    old_duration = entry['duration']
-                    entry['duration'] = new_duration
-                    changes.append(f"duration changed from {old_duration} to {new_duration} minutes")
-                    dry_run_changes.append(f"duration to {new_duration}")
-            except ValueError:
-                print("Invalid duration. Must be an integer. Keeping original value.")
-
-        # Category
-        old_category = entry.get('category', 'None')
-        display_category = old_category if old_category != 'None' else "None"
-        new_category = self._prompt_for_field("Category", display_category)
-
-        if new_category is not None:
-            # Handle empty string input to clear category
-            if new_category == "":
-                new_category = None
-
-            if new_category != old_category:
-                entry['category'] = new_category
-                if old_category == 'None':
-                    changes.append(f"category updated to '{new_category}'")
-                    dry_run_changes.append(f"add category '{new_category}'")
-                elif new_category is None or new_category == "None":
-                    changes.append(f"category removed (was '{old_category}')")
-                    dry_run_changes.append(f"remove category")
-                else:
-                    changes.append(f"category changed from '{old_category}' to '{new_category}'")
-                    dry_run_changes.append(f"change category to '{new_category}'")
-
-        # Date
-        new_date = self._prompt_for_field("Date (YYYY-MM-DD)", entry['date'])
-        if new_date is not None and new_date != entry['date']:
-            old_date = entry['date']
-            entry['date'] = new_date
-            changes.append(f"date changed from {old_date} to {new_date}")
-            dry_run_changes.append(f"date to {new_date}")
-
-        # Show summary if we're in interactive mode
-        if changes:
-            if is_dry_run:
-                print(f"\nYou are about to update entry {entry['id']}: {', '.join(dry_run_changes)}.")
-                print("No changes will be saved (dry-run mode).")
-            else:
-                print(f"\nThe following changes will be made to entry {entry['id']}:")
-                for change in changes:
-                    print(f"- {change}")
-        else:
-            print("\nNo changes were specified.")
-
-    def _prompt_for_field(self, field_name, current_value):
-        """Prompt the user for a new value for a field.
-
-        Args:
-            field_name: The name of the field being edited.
-            current_value: The current value of the field.
-
-        Returns:
-            The new value if changed, or None if unchanged.
-        """
-        while True:
-            response = input(f"{field_name} [{current_value}]: ").strip()
-            if not response:
-                return None
-
-            confirm = input(f"Change {field_name} to '{response}'? (y/n): ").strip().lower()
-            if confirm == 'y' or confirm == 'yes':
-                return response
-            elif confirm == 'n' or confirm == 'no':
-                print(f"Keeping current {field_name}.")
-                return None
-            else:
-                print("Please answer 'y' or 'n'.")
-
-    def _confirm_changes(self, entry_id, changes):
-        """Ask the user to confirm the changes before saving.
-
-        Args:
-            entry_id: The ID of the entry being edited.
-            changes: List of change descriptions.
-
-        Returns:
-            True if the user confirms, False otherwise.
-        """
-        print("\nReview changes:")
-        for change in changes:
-            print(f"- {change}")
-
-        while True:
-            response = input("\nSave these changes? (y/n): ").strip().lower()
-            if response == 'y' or response == 'yes':
-                return True
-            elif response == 'n' or response == 'no':
-                return False
-            else:
-                print("Please answer 'y' or 'n'.")
+        # Apply the changes
+        self._apply_updates_to_entry(entry, updates)
+        return changes
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
