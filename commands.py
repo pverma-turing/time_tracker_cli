@@ -2457,6 +2457,8 @@ class AnalyticsCommand(Command):
                                      help='Show only top N categories by time spent')
         parser.add_argument('--daily', action='store_true',
                                       help='Show breakdown of time spent per day instead of per category')
+        parser.add_argument('--category',
+                                      help='Filter results to only include entries from the specified category')
 
     def execute(self, args):
         """Execute the analytics command."""
@@ -2493,6 +2495,11 @@ class AnalyticsCommand(Command):
                 return
             top_n = args.top
 
+        # Get category filter if provided
+        category_filter = None
+        if hasattr(args, 'category') and args.category:
+            category_filter = args.category
+
         # Check if daily breakdown is requested
         daily_breakdown = hasattr(args, 'daily') and args.daily
         # If daily breakdown is enabled, ignore top_n (as specified in requirements)
@@ -2513,17 +2520,27 @@ class AnalyticsCommand(Command):
             print("No log entries found in the specified date range.")
             return
 
+        # Filter logs by category if specified
+        if category_filter:
+            filtered_logs = self._filter_logs_by_category(filtered_logs, category_filter)
+
+            if not filtered_logs:
+                print(f"No entries found for category '{category_filter}'.")
+                return
+
         # Process logs based on breakdown type
         if daily_breakdown:
             # Calculate time spent per day
             daily_times = self._calculate_time_per_day(filtered_logs)
             # Display daily breakdown
-            self._display_daily_results(daily_times)
+            self._display_daily_results(daily_times, category_filter)
         else:
-            # Calculate time spent per category (original functionality)
+            # If category filter is applied and we're not in daily mode,
+            # we still need to calculate per category, but it will only show
+            # the filtered category or nothing
             category_times = self._calculate_time_per_category(filtered_logs)
             # Display category breakdown
-            self._display_results(category_times, top_n)
+            self._display_category_results(category_times, top_n, category_filter)
 
     def _filter_logs_by_date_range(self, logs, from_date, to_date):
         """Filter logs to include only those within the specified date range.
@@ -2557,6 +2574,28 @@ class AnalyticsCommand(Command):
                 continue  # Skip entries after to_date
 
             filtered_logs.append(entry)
+
+        return filtered_logs
+
+    def _filter_logs_by_category(self, logs, category):
+        """Filter logs to include only those from the specified category.
+
+        Args:
+            logs: List of time entry objects
+            category: Category name to filter by
+
+        Returns:
+            Filtered list of time entry objects
+        """
+        filtered_logs = []
+
+        for entry in logs:
+            # Get the entry category (or empty string if None)
+            entry_category = entry.get('category', '')
+
+            # Check if the entry's category matches the filter
+            if entry_category.lower() == category.lower():  # Case-insensitive matching
+                filtered_logs.append(entry)
 
         return filtered_logs
 
@@ -2614,14 +2653,19 @@ class AnalyticsCommand(Command):
 
         return rounded_times
 
-    def _display_results(self, category_times, top_n=None):
+    def _display_category_results(self, category_times, top_n=None, category_filter=None):
         """Display the total time spent per category, optionally limited to top N categories.
 
         Args:
             category_times: Dictionary with categories as keys and total times as values
             top_n: Optional limit to show only top N categories by time spent
+            category_filter: Optional category name filter that was applied
         """
-        print("Time spent per category:")
+        # Adjust the header based on whether a category filter was applied
+        if category_filter:
+            print(f"Time spent for category '{category_filter}':")
+        else:
+            print("Time spent per category:")
 
         if not category_times:
             print("No log entries found.")
@@ -2644,13 +2688,18 @@ class AnalyticsCommand(Command):
             # Format and print
             print(f"{category}: {total_hours}h {total_minutes}m")
 
-    def _display_daily_results(self, daily_times):
+    def _display_daily_results(self, daily_times, category_filter=None):
         """Display the total time spent per day.
 
         Args:
             daily_times: Dictionary with dates as keys and total times as values
+            category_filter: Optional category name filter that was applied
         """
-        print("Time spent per day:")
+        # Adjust the header based on whether a category filter was applied
+        if category_filter:
+            print(f"Time spent per day for category '{category_filter}':")
+        else:
+            print("Time spent per day:")
 
         if not daily_times:
             print("No log entries found.")
