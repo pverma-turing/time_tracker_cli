@@ -2522,7 +2522,7 @@ class AnalyticsCommand(Command):
         save_filepath = getattr(args, 'save', None)
 
         # Validate combination of format and save
-        if save_filepath and output_format != 'text':
+        if save_filepath and self._validate_file_path(save_filepath, args):
             self._output_error("--save can only be used with text format, not with --format json", args)
             return
 
@@ -2598,6 +2598,22 @@ class AnalyticsCommand(Command):
             print(json.dumps(error_json, indent=2))
         else:
             print(f"Error: {message}")
+
+    def _validate_file_path(self, filepath, args):
+        """Validate if the provided path is valid for file writing 
+        
+        Args:
+            filepath: Path where the file should be saved
+            args: Command arguments            
+                        
+        Returns:
+            True if the path is valid, False otherwise
+        """
+        if os.path.isdir(filepath):
+            self._output_error(f"{filepath} is a directory, Please specify filename")
+            return False
+        return True
+
 
     def _apply_top_n_limit(self, time_dict, top_n):
         """Apply a top N limit to a dictionary of times.
