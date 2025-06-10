@@ -2553,15 +2553,16 @@ class AnalyticsCommand(Command):
             # Calculate time spent per day
             daily_times = self._calculate_time_per_day(filtered_logs)
 
-            # Output results in the requested format
+            # Handle output based on format and destination
             if output_format == 'json':
-                self._output_daily_json(daily_times)
-            else:
-                # If saving to file, generate the text output
+                if save_filepath:
+                    self._save_daily_json_to_file(daily_times, save_filepath)
+                else:
+                    self._output_daily_json(daily_times)
+            else:  # text format
                 if save_filepath:
                     self._save_daily_text_to_file(daily_times, category_filters, save_filepath)
                 else:
-                    # Display text output to console
                     self._display_daily_text(daily_times, category_filters)
         else:
             # Calculate time spent per category
@@ -2571,15 +2572,16 @@ class AnalyticsCommand(Command):
             if top_n is not None:
                 category_times = self._apply_top_n_limit(category_times, top_n)
 
-            # Output results in the requested format
+            # Handle output based on format and destination
             if output_format == 'json':
-                self._output_category_json(category_times)
-            else:
-                # If saving to file, generate the text output
+                if save_filepath:
+                    self._save_category_json_to_file(category_times, save_filepath)
+                else:
+                    self._output_category_json(category_times)
+            else:  # text format
                 if save_filepath:
                     self._save_category_text_to_file(category_times, category_filters, save_filepath)
                 else:
-                    # Display text output to console
                     self._display_category_text(category_times, category_filters)
 
     def _output_error(self, message, args):
@@ -2962,6 +2964,111 @@ class AnalyticsCommand(Command):
         except Exception as e:
             self._output_error(f"Could not write to file {filepath}: {str(e)}",
                                type('Args', (), {'save': filepath, 'format': 'text'}))
+
+    def _create_category_json(self, category_times):
+        """Create a JSON structure for category data.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+
+        Returns:
+            Dictionary with the JSON structure
+        """
+        # Create a data dictionary with formatted time values
+        data = {}
+        for category, hours in category_times.items():
+            data[category] = self._format_time(hours)
+
+        # Create the JSON structure
+        return {
+            "summary_type": "category",
+            "data": data
+        }
+
+    def _create_daily_json(self, daily_times):
+        """Create a JSON structure for daily data.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+
+        Returns:
+            Dictionary with the JSON structure
+        """
+        # Create a data dictionary with formatted time values
+        # Sort days chronologically
+        sorted_days = sorted(daily_times.items())
+
+        data = {}
+        for date_str, hours in sorted_days:
+            data[date_str] = self._format_time(hours)
+
+        # Create the JSON structure
+        return {
+            "summary_type": "daily",
+            "data": data
+        }
+
+    def _output_category_json(self, category_times):
+        """Output the total time spent per category in JSON format to the console.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+        """
+        # Create the JSON structure
+        result = self._create_category_json(category_times)
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _output_daily_json(self, daily_times):
+        """Output the total time spent per day in JSON format to the console.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+        """
+        # Create the JSON structure
+        result = self._create_daily_json(daily_times)
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _save_category_json_to_file(self, category_times, filepath):
+        """Save the total time spent per category in JSON format to a file.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            filepath: Path to the file where the output should be saved
+        """
+        # Create the JSON structure
+        result = self._create_category_json(category_times)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'json'}))
+
+    def _save_daily_json_to_file(self, daily_times, filepath):
+        """Save the total time spent per day in JSON format to a file.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            filepath: Path to the file where the output should be saved
+        """
+        # Create the JSON structure
+        result = self._create_daily_json(daily_times)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'json'}))
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
