@@ -1527,29 +1527,45 @@ class EditCommand(Command):
         # Make a copy of the entry to avoid modifying the original in dry-run mode
         entry = original_entry.copy() if args.dry_run else original_entry
         changes = []
+        dry_run_changes = []
+
         # Update fields if specified
         if args.task is not None and args.task != entry['task']:
             old_task = entry['task']
             entry['task'] = args.task
             changes.append(f"task changed from '{old_task}' to '{args.task}'")
+            dry_run_changes.append(f"change task to '{args.task}'")
 
         if args.duration is not None and args.duration != entry['duration']:
             old_duration = entry['duration']
             entry['duration'] = args.duration
             changes.append(f"duration changed from {old_duration} to {args.duration} minutes")
+            dry_run_changes.append(f"duration to {args.duration}")
 
         if args.category is not None and args.category != entry.get('category'):
             old_category = entry.get('category', 'None')
             entry['category'] = args.category
             if old_category == 'None':
                 changes.append(f"category updated to '{args.category}'")
+                dry_run_changes.append(f"add category '{args.category}'")
             else:
                 changes.append(f"category changed from '{old_category}' to '{args.category}'")
+                dry_run_changes.append(f"change category to '{args.category}'")
 
         if args.date is not None and args.date != entry['date']:
             old_date = entry['date']
             entry['date'] = args.date
             changes.append(f"date changed from {old_date} to {args.date}")
+            dry_run_changes.append(f"date to {args.date}")
+
+        # Handle dry run mode
+        if args.dry_run:
+            if dry_run_changes:
+                print(
+                    f"You are about to update entry {args.id}: {', '.join(dry_run_changes)}. No changes will be saved (dry-run mode).")
+            else:
+                print(f"No changes would be made to entry {args.id}. (dry-run mode)")
+            return
 
         # Save the updated entries if not in dry run mode
         self._save_logs(entries)
