@@ -14,4 +14,5 @@ AVAILABLE_COMMANDS = {
     "summary": "SummaryCommand",
     'report': 'ReportCommand',
     'delete': "DeleteCommand",
+    'edit': "EditCommand"
 }

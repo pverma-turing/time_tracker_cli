@@ -1468,3 +1468,116 @@ class DeleteCommand(Command):
             save_logs(logs)
         except Exception as e:
             print(f"Error saving logs: {e}")
+
+
+class EditCommand(Command):
+    """Command to edit an existing time entry."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Delete logs"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """
+        Add report command-specific arguments to parser.
+
+        Configure the parser with all arguments needed for generating summary reports,
+        including date range and grouping options.
+
+        Args:
+            parser: The argument parser to add arguments to.
+        """
+        parser.add_argument('--id', help='ID of the specific log entry to edit')
+        parser.add_argument('--task', help='New task description')
+        parser.add_argument('--duration', type=int, help='New duration in minutes')
+        parser.add_argument('--category', help='New category')
+        parser.add_argument('--date', help='New date in YYYY-MM-DD format')
+        parser.add_argument('--dry-run', action='store_true', help='Simulate the update without saving changes')
+
+    def execute(self, args):
+        """Execute the edit command with the given arguments."""
+        # Check if at least one field is specified for update
+        update_fields = [args.task, args.duration, args.category, args.date]
+        if not any(field is not None for field in update_fields):
+            print(
+                "Error: At least one field (--task, --duration, --category, or --date) must be specified for editing.")
+            return
+
+        # Get all entries
+        entries = self._get_logs()
+
+        # Find the entry with the specified ID
+        entry_index = None
+        for i, entry in enumerate(entries):
+            if entry.get('id') == int(args.id):
+                entry_index = i
+                break
+
+        if entry_index is None:
+            print(f"No entry found with ID {args.id}.")
+            return
+
+        # Get the entry to edit
+        original_entry = entries[entry_index]
+        # Make a copy of the entry to avoid modifying the original in dry-run mode
+        entry = original_entry.copy() if args.dry_run else original_entry
+        changes = []
+        # Update fields if specified
+        if args.task is not None and args.task != entry['task']:
+            old_task = entry['task']
+            entry['task'] = args.task
+            changes.append(f"task changed from '{old_task}' to '{args.task}'")
+
+        if args.duration is not None and args.duration != entry['duration']:
+            old_duration = entry['duration']
+            entry['duration'] = args.duration
+            changes.append(f"duration changed from {old_duration} to {args.duration} minutes")
+
+        if args.category is not None and args.category != entry.get('category'):
+            old_category = entry.get('category', 'None')
+            entry['category'] = args.category
+            if old_category == 'None':
+                changes.append(f"category updated to '{args.category}'")
+            else:
+                changes.append(f"category changed from '{old_category}' to '{args.category}'")
+
+        if args.date is not None and args.date != entry['date']:
+            old_date = entry['date']
+            entry['date'] = args.date
+            changes.append(f"date changed from {old_date} to {args.date}")
+
+        # Save the updated entries if not in dry run mode
+        self._save_logs(entries)
+
+        # Print a summary of changes
+        if changes:
+            print(f"Updated entry {args.id}: {', '.join(changes)}.")
+        else:
+            print(f"No changes made to entry {args.id}.")
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _save_logs(self, logs):
+        """Save the remaining logs back to storage."""
+        # This should use the same data storage mechanism as other commands
+        # For example, if using JSON file storage:
+        try:
+            from storage import save_logs
+            save_logs(logs)
+        except Exception as e:
+            print(f"Error saving logs: {e}")
