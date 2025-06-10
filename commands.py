@@ -19,6 +19,7 @@ import datetime
 import json
 import os
 import sys
+from datetime import datetime as dt
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -2448,22 +2449,91 @@ class AnalyticsCommand(Command):
     """Command to calculate and display total time spent per category."""
 
     def add_arguments(self, parser: argparse.ArgumentParser) -> None:
-        pass
+        parser.add_argument('--from', dest='from_date',
+                                      help='Start date for filtering (YYYY-MM-DD format)')
+        parser.add_argument('--to', dest='to_date',
+                                      help='End date for filtering (YYYY-MM-DD format)')
 
     def execute(self, args):
         """Execute the analytics command."""
+
+        """Execute the analytics command."""
+        # Validate date format if provided
+        from_date = None
+        to_date = None
+
+        # Parse and validate from_date if provided
+        if hasattr(args, 'from_date') and args.from_date:
+            try:
+                from_date = dt.strptime(args.from_date, '%Y-%m-%d').date()
+            except ValueError:
+                print(f"Error: Invalid date format for --from. Please use YYYY-MM-DD format.")
+                return
+
+        # Parse and validate to_date if provided
+        if hasattr(args, 'to_date') and args.to_date:
+            try:
+                to_date = dt.strptime(args.to_date, '%Y-%m-%d').date()
+            except ValueError:
+                print(f"Error: Invalid date format for --to. Please use YYYY-MM-DD format.")
+                return
+
+        # Check if date range is valid (from_date <= to_date)
+        if from_date and to_date and from_date > to_date:
+            print(f"Error: Start date ({args.from_date}) is after end date ({args.to_date}).")
+            return
+
+
         # Get all time entries
         logs = self._get_logs()
 
-        if not logs:
-            print("No log entries found.")
+        # Filter logs by date range if specified
+        filtered_logs = self._filter_logs_by_date_range(logs, from_date, to_date)
+
+        if not filtered_logs:
+            print("No log entries found in the specified date range.")
             return
 
         # Calculate time spent per category
-        category_times = self._calculate_time_per_category(logs)
+        category_times = self._calculate_time_per_category(filtered_logs)
 
         # Display the results
         self._display_results(category_times)
+
+    def _filter_logs_by_date_range(self, logs, from_date, to_date):
+        """Filter logs to include only those within the specified date range.
+
+        Args:
+            logs: List of time entry objects
+            from_date: Start date for filtering (inclusive), or None for no start limit
+            to_date: End date for filtering (inclusive), or None for no end limit
+
+        Returns:
+            Filtered list of time entry objects
+        """
+        if not from_date and not to_date:
+            return logs  # No filtering needed
+
+        filtered_logs = []
+
+        for entry in logs:
+            # Parse the entry date from string (assuming entry.date is in YYYY-MM-DD format)
+            # Actual implementation will depend on how dates are stored in your TimeEntry class
+            try:
+                entry_date = dt.strptime(entry['date'], '%Y-%m-%d').date()
+            except (ValueError, AttributeError):
+                # Skip entries with invalid dates
+                continue
+
+            # Apply date range filtering
+            if from_date and entry_date < from_date:
+                continue  # Skip entries before from_date
+            if to_date and entry_date > to_date:
+                continue  # Skip entries after to_date
+
+            filtered_logs.append(entry)
+
+        return filtered_logs
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
