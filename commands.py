@@ -2459,6 +2459,10 @@ class AnalyticsCommand(Command):
                                       help='Show breakdown of time spent per day instead of per category')
         parser.add_argument('--category', action='append',  # Changed to action='append'
                                       help='Filter results to include entries from the specified category (can be used multiple times)')
+        parser.add_argument('--format',
+                                      choices=['text', 'json'],
+                                      default='text',
+                                      help='Output format (text or json)')
 
     def execute(self, args):
         """Execute the analytics command."""
@@ -2471,7 +2475,7 @@ class AnalyticsCommand(Command):
             try:
                 from_date = dt.strptime(args.from_date, '%Y-%m-%d').date()
             except ValueError:
-                print(f"Error: Invalid date format for --from. Please use YYYY-MM-DD format.")
+                self._output_error("Invalid date format for --from. Please use YYYY-MM-DD format.", args)
                 return
 
         # Parse and validate to_date if provided
@@ -2479,45 +2483,49 @@ class AnalyticsCommand(Command):
             try:
                 to_date = dt.strptime(args.to_date, '%Y-%m-%d').date()
             except ValueError:
-                print(f"Error: Invalid date format for --to. Please use YYYY-MM-DD format.")
+                self._output_error("Invalid date format for --to. Please use YYYY-MM-DD format.", args)
                 return
 
         # Check if date range is valid (from_date <= to_date)
         if from_date and to_date and from_date > to_date:
-            print(f"Error: Start date ({args.from_date}) is after end date ({args.to_date}).")
+            self._output_error(f"Start date ({args.from_date}) is after end date ({args.to_date}).", args)
             return
 
         # Validate top N parameter if provided
         top_n = None
         if hasattr(args, 'top') and args.top is not None:
             if args.top <= 0:
-                print("Error: --top must be a positive integer.")
+                self._output_error("--top must be a positive integer.", args)
                 return
             top_n = args.top
 
-        # Get category filter if provided
+        # Get category filters if provided (may be multiple or None)
         category_filters = None
         if hasattr(args, 'category') and args.category:
             category_filters = args.category
 
         # Check if daily breakdown is requested
         daily_breakdown = hasattr(args, 'daily') and args.daily
+
         # If daily breakdown is enabled, ignore top_n (as specified in requirements)
         if daily_breakdown:
             top_n = None
+
+        # Determine output format
+        output_format = getattr(args, 'format', 'text')
 
         # Get all time entries
         logs = self._get_logs()
 
         if not logs:
-            print("No log entries found.")
+            self._output_error("No log entries found.", args)
             return
 
         # Filter logs by date range if specified
         filtered_logs = self._filter_logs_by_date_range(logs, from_date, to_date)
 
         if not filtered_logs:
-            print("No log entries found in the specified date range.")
+            self._output_error("No log entries found in the specified date range.", args)
             return
 
         # Filter logs by categories if specified
@@ -2525,22 +2533,83 @@ class AnalyticsCommand(Command):
             filtered_logs = self._filter_logs_by_categories(filtered_logs, category_filters)
 
             if not filtered_logs:
-                print(f"No entries found for the specified categories.")
+                self._output_error("No entries found for the specified categories.", args)
                 return
 
         # Process logs based on breakdown type
         if daily_breakdown:
             # Calculate time spent per day
             daily_times = self._calculate_time_per_day(filtered_logs)
-            # Display daily breakdown
-            self._display_daily_results(daily_times, category_filters)
+
+            # Output results in the requested format
+            if output_format == 'json':
+                self._output_daily_json(daily_times)
+            else:
+                self._display_daily_text(daily_times, category_filters)
         else:
-            # If category filter is applied and we're not in daily mode,
-            # we still need to calculate per category, but it will only show
-            # the filtered category or nothing
+            # Calculate time spent per category
             category_times = self._calculate_time_per_category(filtered_logs)
-            # Display category breakdown
-            self._display_category_results(category_times, top_n, category_filters)
+
+            # Apply top_n limit if specified
+            if top_n is not None:
+                category_times = self._apply_top_n_limit(category_times, top_n)
+
+            # Output results in the requested format
+            if output_format == 'json':
+                self._output_category_json(category_times)
+            else:
+                self._display_category_text(category_times, category_filters)
+
+    def _output_error(self, message, args):
+        """Output an error message in the appropriate format.
+
+        Args:
+            message: The error message to display
+            args: Command arguments that may specify output format
+        """
+        if hasattr(args, 'format') and args.format == 'json':
+            error_json = {
+                "error": message
+            }
+            print(json.dumps(error_json, indent=2))
+        else:
+            print(f"Error: {message}")
+
+    def _apply_top_n_limit(self, time_dict, top_n):
+        """Apply a top N limit to a dictionary of times.
+
+        Args:
+            time_dict: Dictionary with keys and time values
+            top_n: Maximum number of entries to keep (by highest time)
+
+        Returns:
+            Filtered dictionary with at most top_n entries
+        """
+        # Sort items by time spent (descending)
+        sorted_items = sorted(time_dict.items(),
+                              key=lambda x: x[1],
+                              reverse=True)
+
+        # Apply the limit if necessary
+        if top_n is not None and top_n < len(sorted_items):
+            sorted_items = sorted_items[:top_n]
+
+        # Convert back to dictionary
+        return dict(sorted_items)
+
+    def _format_time(self, hours):
+        """Format time in hours as 'Xh Ym' format.
+
+        Args:
+            hours: Time in decimal hours
+
+        Returns:
+            Formatted time string
+        """
+        total_hours = int(hours)
+        total_minutes = int((hours - total_hours) * 60)
+
+        return f"{total_hours}h {total_minutes}m"
 
     def _filter_logs_by_date_range(self, logs, from_date, to_date):
         """Filter logs to include only those within the specified date range.
@@ -2677,12 +2746,11 @@ class AnalyticsCommand(Command):
             categories_str = "', '".join(category_filters)
             return f" for categories '{categories_str}'"
 
-    def _display_category_results(self, category_times, top_n=None, category_filters=None):
-        """Display the total time spent per category, optionally limited to top N categories.
+    def _display_category_text(self, category_times, category_filters=None):
+        """Display the total time spent per category in plain text format.
 
         Args:
             category_times: Dictionary with categories as keys and total times as values
-            top_n: Optional limit to show only top N categories by time spent
             category_filters: Optional list of category names that were used for filtering
         """
         # Generate the appropriate header based on category filters
@@ -2698,20 +2766,13 @@ class AnalyticsCommand(Command):
                                    key=lambda x: x[1],
                                    reverse=True)
 
-        # Apply top_n limit if specified
-        if top_n is not None and top_n < len(sorted_categories):
-            sorted_categories = sorted_categories[:top_n]
-
         for category, hours in sorted_categories:
-            # Convert hours to hours and minutes
-            total_hours = int(hours)
-            total_minutes = int((hours - total_hours) * 60)
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{category}: {time_str}")
 
-            # Format and print
-            print(f"{category}: {total_hours}h {total_minutes}m")
-
-    def _display_daily_results(self, daily_times, category_filters=None):
-        """Display the total time spent per day.
+    def _display_daily_text(self, daily_times, category_filters=None):
+        """Display the total time spent per day in plain text format.
 
         Args:
             daily_times: Dictionary with dates as keys and total times as values
@@ -2729,12 +2790,52 @@ class AnalyticsCommand(Command):
         sorted_days = sorted(daily_times.items(), key=lambda x: x[0])
 
         for date_str, hours in sorted_days:
-            # Convert hours to hours and minutes
-            total_hours = int(hours)
-            total_minutes = int((hours - total_hours) * 60)
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{date_str}: {time_str}")
 
-            # Format and print
-            print(f"{date_str}: {total_hours}h {total_minutes}m")
+    def _output_category_json(self, category_times):
+        """Output the total time spent per category in JSON format.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+        """
+        # Create a data dictionary with formatted time values
+        data = {}
+        for category, hours in category_times.items():
+            data[category] = self._format_time(hours)
+
+        # Create the JSON structure
+        result = {
+            "summary_type": "category",
+            "data": data
+        }
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _output_daily_json(self, daily_times):
+        """Output the total time spent per day in JSON format.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+        """
+        # Create a data dictionary with formatted time values
+        # Sort days chronologically
+        sorted_days = sorted(daily_times.items())
+
+        data = {}
+        for date_str, hours in sorted_days:
+            data[date_str] = self._format_time(hours)
+
+        # Create the JSON structure
+        result = {
+            "summary_type": "daily",
+            "data": data
+        }
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
