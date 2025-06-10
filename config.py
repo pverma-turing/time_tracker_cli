@@ -15,5 +15,6 @@ AVAILABLE_COMMANDS = {
     'report': 'ReportCommand',
     'delete': "DeleteCommand",
     'edit': "EditCommand",
-    'tag': "TagCommand"
+    'tag': "TagCommand",
+    'analytics': "AnalyticsCommand"
 }

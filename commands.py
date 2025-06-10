@@ -16,10 +16,13 @@ a consistent user interface across the application.
 
 import argparse
 import datetime
+import io
 import json
 import os
 import sys
+from datetime import datetime as dt
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import List, Dict, Any
 from datetime import datetime as dt
 from storage import load_logs
@@ -2441,3 +2444,656 @@ class TagCommand(Command):
                 else:
                     updated_logs.append(log)
             self._save_logs(updated_logs)
+
+
+class AnalyticsCommand(Command):
+    """Command to calculate and display total time spent per category."""
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument('--from', dest='from_date',
+                                      help='Start date for filtering (YYYY-MM-DD format)')
+        parser.add_argument('--to', dest='to_date',
+                                      help='End date for filtering (YYYY-MM-DD format)')
+        parser.add_argument('--top', type=int,
+                                     help='Show only top N categories by time spent')
+        parser.add_argument('--daily', action='store_true',
+                                      help='Show breakdown of time spent per day instead of per category')
+        parser.add_argument('--category', action='append',  # Changed to action='append'
+                                      help='Filter results to include entries from the specified category (can be used multiple times)')
+        parser.add_argument('--format',
+                                      choices=['text', 'json'],
+                                      default='text',
+                                      help='Output format (text or json)')
+        parser.add_argument('--save',
+                            metavar='FILEPATH',
+                            help='Save the output to a file instead of displaying it')
+
+    def execute(self, args):
+        """Execute the analytics command."""
+        # Validate date format if provided
+        from_date = None
+        to_date = None
+
+        # Parse and validate from_date if provided
+        if hasattr(args, 'from_date') and args.from_date:
+            try:
+                from_date = dt.strptime(args.from_date, '%Y-%m-%d').date()
+            except ValueError:
+                self._output_error("Invalid date format for --from. Please use YYYY-MM-DD format.", args)
+                return
+
+        # Parse and validate to_date if provided
+        if hasattr(args, 'to_date') and args.to_date:
+            try:
+                to_date = dt.strptime(args.to_date, '%Y-%m-%d').date()
+            except ValueError:
+                self._output_error("Invalid date format for --to. Please use YYYY-MM-DD format.", args)
+                return
+
+        # Check if date range is valid (from_date <= to_date)
+        if from_date and to_date and from_date > to_date:
+            self._output_error(f"Start date ({args.from_date}) is after end date ({args.to_date}).", args)
+            return
+
+        # Validate top N parameter if provided
+        top_n = None
+        if hasattr(args, 'top') and args.top is not None:
+            if args.top <= 0:
+                self._output_error("--top must be a positive integer.", args)
+                return
+            top_n = args.top
+
+        # Get category filters if provided (may be multiple or None)
+        category_filters = None
+        if hasattr(args, 'category') and args.category:
+            category_filters = args.category
+
+        # Check if daily breakdown is requested
+        daily_breakdown = hasattr(args, 'daily') and args.daily
+
+        # If daily breakdown is enabled, ignore top_n (as specified in requirements)
+        if daily_breakdown:
+            top_n = None
+
+        # Determine output format
+        output_format = getattr(args, 'format', 'text')
+
+        # Check if file output is requested
+        save_filepath = getattr(args, 'save', None)
+
+        # Validate combination of format and save
+        if save_filepath and self._validate_file_path(save_filepath, args):
+            self._output_error("--save can only be used with text format, not with --format json", args)
+            return
+
+        # Get all time entries
+        logs = self._get_logs()
+
+        if not logs:
+            self._output_error("No log entries found.", args)
+            return
+
+        # Filter logs by date range if specified
+        filtered_logs = self._filter_logs_by_date_range(logs, from_date, to_date)
+
+        if not filtered_logs:
+            self._output_error("No log entries found in the specified date range.", args)
+            return
+
+        # Filter logs by categories if specified
+        if category_filters:
+            filtered_logs = self._filter_logs_by_categories(filtered_logs, category_filters)
+
+            if not filtered_logs:
+                self._output_error("No entries found for the specified categories.", args)
+                return
+
+        # Process logs based on breakdown type
+        if daily_breakdown:
+            # Calculate time spent per day
+            daily_times = self._calculate_time_per_day(filtered_logs)
+
+            # Handle output based on format and destination
+            if output_format == 'json':
+                if save_filepath:
+                    self._save_daily_json_to_file(daily_times, save_filepath)
+                else:
+                    self._output_daily_json(daily_times)
+            else:  # text format
+                if save_filepath:
+                    self._save_daily_text_to_file(daily_times, category_filters, save_filepath)
+                else:
+                    self._display_daily_text(daily_times, category_filters)
+        else:
+            # Calculate time spent per category
+            category_times = self._calculate_time_per_category(filtered_logs)
+
+            # Apply top_n limit if specified
+            if top_n is not None:
+                category_times = self._apply_top_n_limit(category_times, top_n)
+
+            # Handle output based on format and destination
+            if output_format == 'json':
+                if save_filepath:
+                    self._save_category_json_to_file(category_times, save_filepath)
+                else:
+                    self._output_category_json(category_times)
+            else:  # text format
+                if save_filepath:
+                    self._save_category_text_to_file(category_times, category_filters, save_filepath)
+                else:
+                    self._display_category_text(category_times, category_filters)
+
+    def _output_error(self, message, args):
+        """Output an error message in the appropriate format.
+
+        Args:
+            message: The error message to display
+            args: Command arguments that may specify output format
+        """
+        if hasattr(args, 'format') and args.format == 'json':
+            error_json = {
+                "error": message
+            }
+            print(json.dumps(error_json, indent=2))
+        else:
+            print(f"Error: {message}")
+
+    def _validate_file_path(self, filepath, args):
+        """Validate if the provided path is valid for file writing 
+        
+        Args:
+            filepath: Path where the file should be saved
+            args: Command arguments            
+                        
+        Returns:
+            True if the path is valid, False otherwise
+        """
+        if os.path.isdir(filepath):
+            self._output_error(f"{filepath} is a directory, Please specify filename")
+            return False
+        return True
+
+
+    def _apply_top_n_limit(self, time_dict, top_n):
+        """Apply a top N limit to a dictionary of times.
+
+        Args:
+            time_dict: Dictionary with keys and time values
+            top_n: Maximum number of entries to keep (by highest time)
+
+        Returns:
+            Filtered dictionary with at most top_n entries
+        """
+        # Sort items by time spent (descending)
+        sorted_items = sorted(time_dict.items(),
+                              key=lambda x: x[1],
+                              reverse=True)
+
+        # Apply the limit if necessary
+        if top_n is not None and top_n < len(sorted_items):
+            sorted_items = sorted_items[:top_n]
+
+        # Convert back to dictionary
+        return dict(sorted_items)
+
+    def _format_time(self, hours):
+        """Format time in hours as 'Xh Ym' format.
+
+        Args:
+            hours: Time in decimal hours
+
+        Returns:
+            Formatted time string
+        """
+        total_hours = int(hours)
+        total_minutes = int((hours - total_hours) * 60)
+
+        return f"{total_hours}h {total_minutes}m"
+
+    def _filter_logs_by_date_range(self, logs, from_date, to_date):
+        """Filter logs to include only those within the specified date range.
+
+        Args:
+            logs: List of time entry objects
+            from_date: Start date for filtering (inclusive), or None for no start limit
+            to_date: End date for filtering (inclusive), or None for no end limit
+
+        Returns:
+            Filtered list of time entry objects
+        """
+        if not from_date and not to_date:
+            return logs  # No filtering needed
+
+        filtered_logs = []
+
+        for entry in logs:
+            # Parse the entry date from string (assuming entry.date is in YYYY-MM-DD format)
+            # Actual implementation will depend on how dates are stored in your TimeEntry class
+            try:
+                entry_date = dt.strptime(entry['date'], '%Y-%m-%d').date()
+            except (ValueError, AttributeError):
+                # Skip entries with invalid dates
+                continue
+
+            # Apply date range filtering
+            if from_date and entry_date < from_date:
+                continue  # Skip entries before from_date
+            if to_date and entry_date > to_date:
+                continue  # Skip entries after to_date
+
+            filtered_logs.append(entry)
+
+        return filtered_logs
+
+    def _filter_logs_by_categories(self, logs, categories):
+        """Filter logs to include only those matching any of the specified categories.
+
+        Args:
+            logs: List of time entry objects
+            categories: List of category names to filter by
+
+        Returns:
+            Filtered list of time entry objects
+        """
+        if not categories:
+            return logs  # No category filtering needed
+
+        filtered_logs = []
+
+        # Convert all category filters to lowercase for case-insensitive matching
+        lowercase_categories = [cat.lower() for cat in categories]
+
+        for entry in logs:
+            # Get the entry category (or empty string if None)
+            entry_category = entry.get("category", "")
+
+            # Check if the entry's category matches any of the filters
+            if entry_category.lower() in lowercase_categories:
+                filtered_logs.append(entry)
+
+        return filtered_logs
+
+    def _calculate_time_per_category(self, logs):
+        """Calculate the total time spent per category across all log entries.
+
+        Args:
+            logs: List of time entry objects
+
+        Returns:
+            Dictionary with categories as keys and total time (in hours) as values
+        """
+        category_times = defaultdict(float)
+
+        for entry in logs:
+            # Get the category (or 'uncategorized' if None)
+            category = entry.get('category', 'uncategorized')
+
+            # Add the duration to the category total
+            category_times[category] += float(entry['duration'])
+
+        # Round each category's time to the nearest 15 minutes (0.25 hours)
+        rounded_times = {}
+        for category, total_time in category_times.items():
+            # Round to nearest 0.25 (15 minutes)
+            rounded_time = round(total_time * 4) / 4
+            rounded_times[category] = rounded_time
+
+        return rounded_times
+
+    def _calculate_time_per_day(self, logs):
+        """Calculate the total time spent per day across all log entries.
+
+        Args:
+            logs: List of time entry objects
+
+        Returns:
+            Dictionary with dates (as strings) as keys and total time (in hours) as values
+        """
+        daily_times = defaultdict(float)
+
+        for entry in logs:
+            # Use the entry's date as the key (assuming it's in YYYY-MM-DD format)
+            date_key = entry['date']
+
+            # Add the duration to the daily total
+            daily_times[date_key] += float(entry['duration'])
+
+        # Round each day's time to the nearest 15 minutes (0.25 hours)
+        rounded_times = {}
+        for date_key, total_time in daily_times.items():
+            # Round to nearest 0.25 (15 minutes)
+            rounded_time = round(total_time * 4) / 4
+            rounded_times[date_key] = rounded_time
+
+        return rounded_times
+
+    def _format_category_header(self, category_filters):
+        """Format the header for category filtering.
+
+        Args:
+            category_filters: List of category names or None
+
+        Returns:
+            Formatted header string
+        """
+        if not category_filters:
+            return ""
+
+        if len(category_filters) == 1:
+            return f" for category '{category_filters[0]}'"
+        else:
+            categories_str = "', '".join(category_filters)
+            return f" for categories '{categories_str}'"
+
+    def _display_category_text(self, category_times, category_filters=None):
+        """Display the total time spent per category in plain text format.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+        """
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per category{header_suffix}:")
+
+        if not category_times:
+            print("No log entries found.")
+            return
+
+        # Sort categories by time spent (descending)
+        sorted_categories = sorted(category_times.items(),
+                                   key=lambda x: x[1],
+                                   reverse=True)
+
+        for category, hours in sorted_categories:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{category}: {time_str}")
+
+    def _display_daily_text(self, daily_times, category_filters=None):
+        """Display the total time spent per day in plain text format.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+        """
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per day{header_suffix}:")
+
+        if not daily_times:
+            print("No log entries found.")
+            return
+
+        # Sort days chronologically (ascending by date)
+        sorted_days = sorted(daily_times.items(), key=lambda x: x[0])
+
+        for date_str, hours in sorted_days:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{date_str}: {time_str}")
+
+    def _output_category_json(self, category_times):
+        """Output the total time spent per category in JSON format.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+        """
+        # Create a data dictionary with formatted time values
+        data = {}
+        for category, hours in category_times.items():
+            data[category] = self._format_time(hours)
+
+        # Create the JSON structure
+        result = {
+            "summary_type": "category",
+            "data": data
+        }
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _output_daily_json(self, daily_times):
+        """Output the total time spent per day in JSON format.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+        """
+        # Create a data dictionary with formatted time values
+        # Sort days chronologically
+        sorted_days = sorted(daily_times.items())
+
+        data = {}
+        for date_str, hours in sorted_days:
+            data[date_str] = self._format_time(hours)
+
+        # Create the JSON structure
+        result = {
+            "summary_type": "daily",
+            "data": data
+        }
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _generate_category_text(self, category_times, category_filters=None):
+        """Generate the total time spent per category as plain text.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+
+        Returns:
+            String containing the formatted text output
+        """
+        # Use StringIO to capture the output
+        output = io.StringIO()
+
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per category{header_suffix}:", file=output)
+
+        if not category_times:
+            print("No log entries found.", file=output)
+            return output.getvalue()
+
+        # Sort categories by time spent (descending)
+        sorted_categories = sorted(category_times.items(),
+                                   key=lambda x: x[1],
+                                   reverse=True)
+
+        for category, hours in sorted_categories:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{category}: {time_str}", file=output)
+
+        return output.getvalue()
+
+    def _generate_daily_text(self, daily_times, category_filters=None):
+        """Generate the total time spent per day as plain text.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+
+        Returns:
+            String containing the formatted text output
+        """
+        # Use StringIO to capture the output
+        output = io.StringIO()
+
+        # Generate the appropriate header based on category filters
+        header_suffix = self._format_category_header(category_filters)
+        print(f"Time spent per day{header_suffix}:", file=output)
+
+        if not daily_times:
+            print("No log entries found.", file=output)
+            return output.getvalue()
+
+        # Sort days chronologically (ascending by date)
+        sorted_days = sorted(daily_times.items(), key=lambda x: x[0])
+
+        for date_str, hours in sorted_days:
+            # Format and print time
+            time_str = self._format_time(hours)
+            print(f"{date_str}: {time_str}", file=output)
+
+        return output.getvalue()
+
+    def _save_category_text_to_file(self, category_times, category_filters, filepath):
+        """Save the total time spent per category as plain text to a file.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+            filepath: Path to the file where the output should be saved
+        """
+        # Generate the text output
+        text_output = self._generate_category_text(category_times, category_filters)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                f.write(text_output)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'text'}))
+
+    def _save_daily_text_to_file(self, daily_times, category_filters, filepath):
+        """Save the total time spent per day as plain text to a file.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            category_filters: Optional list of category names that were used for filtering
+            filepath: Path to the file where the output should be saved
+        """
+        # Generate the text output
+        text_output = self._generate_daily_text(daily_times, category_filters)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                f.write(text_output)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'text'}))
+
+    def _create_category_json(self, category_times):
+        """Create a JSON structure for category data.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+
+        Returns:
+            Dictionary with the JSON structure
+        """
+        # Create a data dictionary with formatted time values
+        data = {}
+        for category, hours in category_times.items():
+            data[category] = self._format_time(hours)
+
+        # Create the JSON structure
+        return {
+            "summary_type": "category",
+            "data": data
+        }
+
+    def _create_daily_json(self, daily_times):
+        """Create a JSON structure for daily data.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+
+        Returns:
+            Dictionary with the JSON structure
+        """
+        # Create a data dictionary with formatted time values
+        # Sort days chronologically
+        sorted_days = sorted(daily_times.items())
+
+        data = {}
+        for date_str, hours in sorted_days:
+            data[date_str] = self._format_time(hours)
+
+        # Create the JSON structure
+        return {
+            "summary_type": "daily",
+            "data": data
+        }
+
+    def _output_category_json(self, category_times):
+        """Output the total time spent per category in JSON format to the console.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+        """
+        # Create the JSON structure
+        result = self._create_category_json(category_times)
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _output_daily_json(self, daily_times):
+        """Output the total time spent per day in JSON format to the console.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+        """
+        # Create the JSON structure
+        result = self._create_daily_json(daily_times)
+
+        # Output the JSON
+        print(json.dumps(result, indent=2))
+
+    def _save_category_json_to_file(self, category_times, filepath):
+        """Save the total time spent per category in JSON format to a file.
+
+        Args:
+            category_times: Dictionary with categories as keys and total times as values
+            filepath: Path to the file where the output should be saved
+        """
+        # Create the JSON structure
+        result = self._create_category_json(category_times)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'json'}))
+
+    def _save_daily_json_to_file(self, daily_times, filepath):
+        """Save the total time spent per day in JSON format to a file.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+            filepath: Path to the file where the output should be saved
+        """
+        # Create the JSON structure
+        result = self._create_daily_json(daily_times)
+
+        # Write to file
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+            print(f"Analytics report saved to {filepath}")
+        except Exception as e:
+            self._output_error(f"Could not write to file {filepath}: {str(e)}",
+                               type('Args', (), {'save': filepath, 'format': 'json'}))
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
