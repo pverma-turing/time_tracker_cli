@@ -2455,6 +2455,8 @@ class AnalyticsCommand(Command):
                                       help='End date for filtering (YYYY-MM-DD format)')
         parser.add_argument('--top', type=int,
                                      help='Show only top N categories by time spent')
+        parser.add_argument('--daily', action='store_true',
+                                      help='Show breakdown of time spent per day instead of per category')
 
     def execute(self, args):
         """Execute the analytics command."""
@@ -2491,6 +2493,12 @@ class AnalyticsCommand(Command):
                 return
             top_n = args.top
 
+        # Check if daily breakdown is requested
+        daily_breakdown = hasattr(args, 'daily') and args.daily
+        # If daily breakdown is enabled, ignore top_n (as specified in requirements)
+        if daily_breakdown:
+            top_n = None
+
         # Get all time entries
         logs = self._get_logs()
 
@@ -2505,11 +2513,17 @@ class AnalyticsCommand(Command):
             print("No log entries found in the specified date range.")
             return
 
-        # Calculate time spent per category
-        category_times = self._calculate_time_per_category(filtered_logs)
-
-        # Display the results, potentially limited to top N categories
-        self._display_results(category_times, top_n)
+        # Process logs based on breakdown type
+        if daily_breakdown:
+            # Calculate time spent per day
+            daily_times = self._calculate_time_per_day(filtered_logs)
+            # Display daily breakdown
+            self._display_daily_results(daily_times)
+        else:
+            # Calculate time spent per category (original functionality)
+            category_times = self._calculate_time_per_category(filtered_logs)
+            # Display category breakdown
+            self._display_results(category_times, top_n)
 
     def _filter_logs_by_date_range(self, logs, from_date, to_date):
         """Filter logs to include only those within the specified date range.
@@ -2573,6 +2587,33 @@ class AnalyticsCommand(Command):
 
         return rounded_times
 
+    def _calculate_time_per_day(self, logs):
+        """Calculate the total time spent per day across all log entries.
+
+        Args:
+            logs: List of time entry objects
+
+        Returns:
+            Dictionary with dates (as strings) as keys and total time (in hours) as values
+        """
+        daily_times = defaultdict(float)
+
+        for entry in logs:
+            # Use the entry's date as the key (assuming it's in YYYY-MM-DD format)
+            date_key = entry['date']
+
+            # Add the duration to the daily total
+            daily_times[date_key] += float(entry['duration'])
+
+        # Round each day's time to the nearest 15 minutes (0.25 hours)
+        rounded_times = {}
+        for date_key, total_time in daily_times.items():
+            # Round to nearest 0.25 (15 minutes)
+            rounded_time = round(total_time * 4) / 4
+            rounded_times[date_key] = rounded_time
+
+        return rounded_times
+
     def _display_results(self, category_times, top_n=None):
         """Display the total time spent per category, optionally limited to top N categories.
 
@@ -2602,6 +2643,29 @@ class AnalyticsCommand(Command):
 
             # Format and print
             print(f"{category}: {total_hours}h {total_minutes}m")
+
+    def _display_daily_results(self, daily_times):
+        """Display the total time spent per day.
+
+        Args:
+            daily_times: Dictionary with dates as keys and total times as values
+        """
+        print("Time spent per day:")
+
+        if not daily_times:
+            print("No log entries found.")
+            return
+
+        # Sort days chronologically (ascending by date)
+        sorted_days = sorted(daily_times.items(), key=lambda x: x[0])
+
+        for date_str, hours in sorted_days:
+            # Convert hours to hours and minutes
+            total_hours = int(hours)
+            total_minutes = int((hours - total_hours) * 60)
+
+            # Format and print
+            print(f"{date_str}: {total_hours}h {total_minutes}m")
 
     def _get_logs(self):
         """Retrieve all time entries from the storage."""
