@@ -2209,3 +2209,235 @@ class EditCommand(Command):
             save_logs(logs)
         except Exception as e:
             print(f"Error saving logs: {e}")
+
+
+class TagCommand(Command):
+    """Command to add tags to a specific log entry."""
+
+    def get_short_description(self) -> str:
+        """
+        Return a short description for the summary command.
+
+        Returns:
+            str: A concise description of the summary command's purpose.
+        """
+        return "Tag logs"
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        """Add command-specific arguments to parser."""
+        parser.add_argument('--id', required=True, type=int, help='ID of the entry to tag')
+        parser.add_argument('--add', help='Comma-separated list of tags to add (e.g., work,urgent)')
+        parser.add_argument('--remove', help='Comma-separated list of tags to remove (e.g., work,urgent)')
+        parser.add_argument('--list', action='store_true', help='List all tags for the specified entry')
+        parser.add_argument('--clear', action='store_true', help='Remove all tags from the specified entry')
+        parser.add_argument('--all', action='store_true', help='List all unique tags across all entries')
+
+    def execute(self, args):
+        """Execute the tag command with the given arguments."""
+        # Count the operation flags
+        flag_count = sum([bool(args.add), bool(args.remove), bool(args.list),
+                          bool(args.clear), bool(args.all)])
+
+        # Validate flag combinations
+        if flag_count > 1:
+            print("Error: The --add, --remove, --list, --clear, and --all flags cannot be used together.")
+            return
+
+        if flag_count == 0:
+            print("Please provide one of the following flags: --add, --remove, --list, --clear, or --all.")
+            return
+
+        # Handle the --all flag (which doesn't need an entry ID)
+        if args.all:
+            self._handle_all_tags()
+            return
+
+        # For all other operations, we need an entry ID
+        if not args.id:
+            print("Error: The --id flag is required for this operation.")
+            return
+
+        # Get the log entry by ID
+        entry = self._get_log_by_id(args.id)
+
+        if not entry:
+            print(f"No entry found with ID {args.id}")
+            return
+
+        # Initialize tags list if it doesn't exist
+        if 'tags' not in entry:
+            entry['tags'] = []
+
+        # Delegate to the appropriate operation handler
+        if args.list:
+            self._handle_list(entry, args.id)
+        elif args.clear:
+            self._handle_clear(entry, args.id)
+        elif args.add:
+            self._handle_add(entry, args.id, args.add)
+        elif args.remove:
+            self._handle_remove(entry, args.id, args.remove)
+    def _handle_all_tags(self):
+        """Handle the --all flag by displaying all unique tags across all entries."""
+        # Get all log entries
+        all_entries = self._get_logs()
+
+        # Collect all unique tags
+        unique_tags = set()
+        for entry in all_entries:
+            if entry.get('tags'):
+                unique_tags.update(entry['tags'])
+
+        # Display the tags sorted alphabetically
+        if unique_tags:
+            sorted_tags = sorted(unique_tags)
+            tags_string = ", ".join(sorted_tags)
+            print(f"All tags: {tags_string}")
+        else:
+            print("No tags found.")
+
+    def _handle_list(self, entry, entry_id):
+        """Handle the list operation."""
+        if not entry['tags']:
+            print(f"No tags found for entry {entry_id}.")
+        else:
+            tags_string = ", ".join(entry['tags'])
+            total_tags = len(entry['tags'])
+            print(f"Tags for entry {entry_id} (total {total_tags}): {tags_string}")
+
+    def _handle_clear(self, entry, entry_id):
+        """Handle the clear operation."""
+        if not entry['tags']:
+            print(f"No tags to clear for entry {entry_id}.")
+            return
+
+        # Clear the tags
+        entry['tags'] = []
+
+        # Save the updated entry
+        self._save_entry(entry)
+
+        # Show confirmation and summary message
+        print(f"Cleared all tags from entry {entry_id}. Total tags now: 0.")
+
+    def _handle_add(self, entry, entry_id, add_arg):
+        """Handle the add operation."""
+        # Parse the comma-separated tags
+        new_tags = [tag.strip() for tag in add_arg.split(',')]
+
+        # Add tags to the entry (without duplicates)
+        added_tags = self._add_tags_to_entry(entry, new_tags)
+
+        # Save the updated entry
+        self._save_entry(entry)
+
+        # Show confirmation message
+        if added_tags:
+            print(f"Added tags {added_tags} to entry {entry_id}.")
+            # Show summary message
+            total_tags = len(entry['tags'])
+            print(f"Total tags now: {total_tags}.")
+        else:
+            print(f"No new tags added to entry {entry_id}. All tags already exist.")
+            total_tags = len(entry['tags'])
+            print(f"Total tags: {total_tags}.")
+
+    def _handle_remove(self, entry, entry_id, remove_arg):
+        """Handle the remove operation."""
+        # Parse the comma-separated tags
+        tags_to_remove = [tag.strip() for tag in remove_arg.split(',')]
+
+        # Remove tags from the entry
+        removed_tags = self._remove_tags_from_entry(entry, tags_to_remove)
+
+        if not removed_tags:
+            print("No matching tags found to remove.")
+            return
+
+        # Save the updated entry
+        self._save_entry(entry)
+
+        # Show confirmation message and summary
+        print(f"Removed tags {removed_tags} from entry {entry_id}.")
+        # Show summary message
+        total_tags = len(entry['tags'])
+        print(f"Total tags now: {total_tags}.")
+    def _get_log_by_id(self, entry_id):
+        """Retrieve a log entry by its ID."""
+        # This would be replaced with actual retrieval logic
+        # For example, by using a data storage service or manager
+        # This is just a placeholder
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return None
+        for log in logs:
+            if log["id"] == int(entry_id):
+                return log
+        return None
+
+    def _add_tags_to_entry(self, entry, new_tags):
+        """Add tags to an entry without duplicating existing ones."""
+        # Initialize tags list if it doesn't exist
+        if 'tags' not in entry:
+            entry['tags'] = []
+
+        # Add only new tags (avoiding duplicates)
+        added_tags = []
+        for tag in new_tags:
+            if tag not in entry['tags']:
+                entry['tags'].append(tag)
+                added_tags.append(tag)
+
+        return added_tags
+
+    def _remove_tags_from_entry(self, entry, tags_to_remove):
+        """Remove tags from an entry and return the list of removed tags."""
+        # Keep track of which tags were actually removed
+        removed_tags = []
+
+        for tag in tags_to_remove:
+            if tag in entry['tags']:
+                entry['tags'].remove(tag)
+                removed_tags.append(tag)
+
+        return removed_tags
+
+    def _get_logs(self):
+        """Retrieve all time entries from the storage."""
+        # In a real implementation, this would load from a database or file
+        # This should be replaced with actual log loading code
+        # For example, by using a data storage service or manager
+
+        from storage import load_logs
+        logs = load_logs()
+        if not logs:
+            return []  # Replace with actual implementation
+        return logs
+
+    def _save_logs(self, logs):
+        """Save the remaining logs back to storage."""
+        # This should use the same data storage mechanism as other commands
+        # For example, if using JSON file storage:
+        try:
+            from storage import save_logs
+            save_logs(logs)
+        except Exception as e:
+            print(f"Error saving logs: {e}")
+
+    def _save_entry(self, entry):
+        """Save the updated entry back to storage."""
+        # This would be replaced with actual save logic
+        # For example, by using a data storage service or manager
+        # This is just a placeholder
+        logs = load_logs()
+        if not logs:
+            self._save_logs([entry])
+        else:
+            updated_logs = []
+            for log in logs:
+                if log['id'] == entry['id']:
+                    updated_logs.append(entry)
+                else:
+                    updated_logs.append(log)
+            self._save_logs(updated_logs)
